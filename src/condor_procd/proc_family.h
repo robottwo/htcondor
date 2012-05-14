@@ -180,8 +180,12 @@ private:
 	Cgroup m_cgroup;
 	std::string m_cgroup_string;
 	CgroupManager &m_cm;
+
+	// File descriptors used for OOM management.
+	int m_oom_fd, m_oom_efd;
 	static long clock_tick;
 
+	int setup_oom_event();
 	int count_tasks_cgroup();
 	int aggregate_usage_cgroup_blockio(ProcFamilyUsage*);
 	int aggregate_usage_cgroup(ProcFamilyUsage*);

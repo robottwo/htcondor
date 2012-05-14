@@ -428,8 +428,23 @@ ProcFamilyServer::wait_loop()
 			snapshot_countdown = 0;
 		}
 
+		// poll our FDs, waiting for something to happen
+		bool command_is_ready = false;
+		fd_set fired_fds;
+		const fd_set &input_fds = m_monitor.get_event_fds();
+		if (!m_server->poll(0, command_is_ready, &input_fds, &fired_fds)) {
+			if (!command_is_ready) {
+				for (int idx=0; idx<FD_SETSIZE; idx++) {
+					if (FD_ISSET(idx, &input_fds) && FD_ISSET(idx, &fired_fds)) {
+						m_monitor.notify_event(idx);
+					}
+				}
+			}
+		}
+
 		// read the command int from the client
-		//
+		// note there is a denial of service - someone could have
+		// written a single byte to get the poll to fire, then OOM.
 		int command;
 		read_from_client(&command, sizeof(int));
 

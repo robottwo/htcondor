@@ -82,6 +82,10 @@ public:
 	// opened. Return true if ok.
 	bool consistent(void);
 
+	// poll read client; see NamedPipeReader::poll
+	// 
+	bool poll(int timeout, bool& ready, const fd_set* addl_fds=NULL, fd_set* result_fds=NULL);
+
 private:
 
 	// set once we're successfully initialized

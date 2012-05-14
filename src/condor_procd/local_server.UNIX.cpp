@@ -261,6 +261,9 @@ bool LocalServer::consistent(void)
 	return m_reader->consistent();
 }
 
-
-
+bool LocalServer::poll(int timeout, bool& ready,
+	const fd_set* addl_fds, fd_set* result_fds)
+{
+	return m_reader->poll(timeout, ready, addl_fds, result_fds);
+}
 
