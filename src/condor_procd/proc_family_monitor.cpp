@@ -390,6 +390,7 @@ ProcFamilyMonitor::unsubscribe_oom_event(int efd)
 	for (it=m_oom_events.begin(); it != m_oom_events.end(); it++) {
 		if (efd == it->second) {
 			m_oom_events.erase(it);
+			FD_CLR(efd, &m_event_set);
 			return;
 		}
 	}
@@ -409,7 +410,9 @@ ProcFamilyMonitor::notify_event(int fd)
 	if (!did_spree) {
 		dprintf(D_PROCFAMILY,
 			"Got an unexpected notification for ProcFamily monitor.\n");
-	}	
+		return;
+	}
+	unsubscribe_oom_event(fd);
 }
 #endif
 

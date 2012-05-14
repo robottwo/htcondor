@@ -209,6 +209,39 @@ after_restore:
 }
 
 int
+ProcFamily::setup_oom_score()
+{
+	// Set the procd so it is not subject to OOM.
+	int oomadj_fd = open("/proc/self/oom_adj", O_WRONLY | O_CLOEXEC);
+	if (oomadj_fd == -1) {
+		dprintf(D_PROCFAMILY,
+			"Unable to open oom_adj for the procd: (errno=%u, %s)\n",
+			errno, strerror(errno));
+		return 1;
+	}
+
+	size_t nleft = 3;
+	ssize_t nwritten;
+	const char * ptr = "-17";
+	while (nleft > 0) {
+		nwritten = write(oomadj_fd, ptr, nleft);
+		if (nwritten < 0) {
+			if (errno == EINTR)
+				continue;
+			dprintf(D_PROCFAMILY,
+				"Unable to write into oom_adj file for procd: (errno=%u, %s)\n",
+				errno, strerror(errno));
+			close(oomadj_fd);
+			return 1;
+		}
+		nleft -= nwritten;
+		ptr += nwritten;
+	}
+	close(oomadj_fd);
+	return 0;
+}
+
+int
 ProcFamily::setup_oom_event()
 {
 	// Initialize the event descriptor
@@ -272,14 +305,41 @@ ProcFamily::setup_oom_event()
 		return 1;
 	}
 
+	// Inform Linux we will be handling the OOM events for this container.
+	int oom_fd2 = open(oom_control_str.c_str(), O_WRONLY | O_CLOEXEC);
+	if (oom_fd2 == -1) {
+		dprintf(D_PROCFAMILY,
+			"Unable to open the OOM control file for writing for ProcFamily %u: %u %s\n",
+			m_root_pid, errno, strerror(errno));
+		return 1;
+	}
+	const char limits [] = "1";
+	size_t nleft = 1;
+	ssize_t nwritten;
+	while (nleft > 0) {
+		nwritten = write(oom_fd2, &limits, 1);
+		if (nwritten < 0) {
+			if (errno == EINTR)
+				continue;
+			dprintf(D_PROCFAMILY,
+				"Unable to set OOM control to %s for ProcFamily %u: %u %s\n",
+					limits, m_root_pid, errno, strerror(errno));
+			close(event_ctrl_fd);
+			close(oom_fd2);
+			return 1;
+		}
+		if (nwritten > 0)
+			break;
+	}
+	close(oom_fd2);
+
 	// Create the subscription string:
 	std::stringstream sub_ss;
 	sub_ss << m_oom_efd << " " << m_oom_fd;
 	std::string sub_str = sub_ss.str();
 
 	// Basically, full_write without bringing in condor_utils...
-	size_t nleft = sub_str.size();
-	ssize_t nwritten;
+	nleft = sub_str.size();
 	const char * ptr = sub_str.c_str();
 	while (nleft > 0) {
 		nwritten = write(event_ctrl_fd, ptr, nleft);
@@ -331,8 +391,10 @@ ProcFamily::set_cgroup(const std::string &cgroup_string)
 		return 1;
 	}
 
-	// Make sure
-	setup_oom_event();
+	// Configure settings for OOM killer.  If we successfully manage the
+	// OOM for the family, then we also mark ourselves immune to OOM.
+	if (!setup_oom_event())
+		setup_oom_score();
 
 	// Now that we have a cgroup, let's move all the existing processes to it
 	ProcFamilyMember* member = m_member_list;

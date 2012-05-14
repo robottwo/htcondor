@@ -185,7 +185,13 @@ private:
 	int m_oom_fd, m_oom_efd;
 	static long clock_tick;
 
+	// Manage the OOM settings for Condor.
+	// If cgroups are used, indicate to the system that we should
+	// handle the OOM events for any running jobs and that we are immune
+	// to the built-in OOM killer
+	int setup_oom_score();
 	int setup_oom_event();
+
 	int count_tasks_cgroup();
 	int aggregate_usage_cgroup_blockio(ProcFamilyUsage*);
 	int aggregate_usage_cgroup(ProcFamilyUsage*);

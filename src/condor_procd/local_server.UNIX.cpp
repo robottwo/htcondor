@@ -144,7 +144,8 @@ LocalServer::set_client_principal(const char* uid_str)
 }
 
 bool
-LocalServer::accept_connection(int timeout, bool &accepted)
+LocalServer::accept_connection(int timeout, bool &accepted,
+	const fd_set *addl_fds, fd_set *result_fds)
 {
 	ASSERT(m_initialized);
 
@@ -157,7 +158,7 @@ LocalServer::accept_connection(int timeout, bool &accepted)
 	// see if a connection arrives within the timeout period
 	//
 	bool ready;
-	if (!m_reader->poll(timeout, ready)) {
+	if (!m_reader->poll(timeout, ready, addl_fds, result_fds)) {
 		return false;
 	}
 	if (!ready) {
@@ -259,11 +260,5 @@ bool LocalServer::consistent(void)
 	ASSERT(m_reader != NULL);
 
 	return m_reader->consistent();
-}
-
-bool LocalServer::poll(int timeout, bool& ready,
-	const fd_set* addl_fds, fd_set* result_fds)
-{
-	return m_reader->poll(timeout, ready, addl_fds, result_fds);
 }
 
