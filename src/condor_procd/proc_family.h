@@ -184,6 +184,12 @@ private:
 	// File descriptors used for OOM management.
 	int m_oom_fd, m_oom_efd;
 	static long clock_tick;
+	static bool have_warned_about_memsw;
+	// Sometimes Condor doesn't successfully clear out the cgroup from the
+	// previous run.  Hence, we subtract off any CPU usage found at the
+	// start of the job.
+	long m_initial_user_cpu;
+	long m_initial_sys_cpu;
 
 	// Manage the OOM settings for Condor.
 	// If cgroups are used, indicate to the system that we should
@@ -199,6 +205,7 @@ private:
 	int spree_cgroup(int);
 	int migrate_to_cgroup(pid_t);
 	void update_max_image_size_cgroup();
+	int get_cpu_usage_cgroup(long &user_cpu, long &sys_cpu);
 #endif
 };
 

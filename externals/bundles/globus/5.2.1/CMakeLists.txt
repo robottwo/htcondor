@@ -35,6 +35,7 @@ if (WITH_GLOBUS)
 		condor_pre_external( GLOBUS globus-5.2.1 "lib;include" "done")
 
 		set (GLOBUS_PATCH patch -i ${CMAKE_CURRENT_SOURCE_DIR}/xio-plugins.patch -p0 &&
+						patch -i ${CMAKE_CURRENT_SOURCE_DIR}/mac_openssl.patch -p0 &&
 						cd gt5.2.1-all-source-installer/source-trees/xio/src/builtins &&
 						mkdir -p gsi popen &&
 						sed -e 's/globus_xio_gsi.h/globus_xio_gsi_driver.h/' ../../drivers/gsi/globus_i_xio_gsi.h >gsi/globus_i_xio_gsi.h &&
@@ -74,7 +75,7 @@ if (WITH_GLOBUS)
 
 			## Set all the config information
 			if ( LINUX )
-				set (GLOBUS_FOUND "${GLOBUS_INSTALL_LOC}/lib/libglobus_gss_assist.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gssapi_gsi.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_proxy_core.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_credential.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_callback.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_sysconfig.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_oldgaa.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_cert_utils.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl_error.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_proxy_ssl.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_callout.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_common.so")
+				set (GLOBUS_FOUND "${GLOBUS_INSTALL_LOC}/lib/libglobus_gss_assist.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gssapi_gsi.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_proxy_core.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_credential.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_callback.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_sysconfig.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_oldgaa.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_cert_utils.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl_error.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_proxy_ssl.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_callout.so;${GLOBUS_INSTALL_LOC}/lib/libglobus_common.so;${LIBLTDL_PATH}")
 			elseif( DARWIN )
 				set (GLOBUS_FOUND "${GLOBUS_INSTALL_LOC}/lib/libglobus_gss_assist.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gssapi_gsi.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_proxy_core.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_credential.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_callback.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_sysconfig.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_oldgaa.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_gsi_cert_utils.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_openssl_error.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_proxy_ssl.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_callout.dylib;${GLOBUS_INSTALL_LOC}/lib/libglobus_common.dylib")
 			else()
