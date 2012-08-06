@@ -827,7 +827,7 @@ VanillaProc::setupOOMEvent(const std::string &cgroup_string)
 	}
 	close(event_ctrl_fd);
 
-	// Fool DC into talking 
+	// Fool DC into talking to the eventfd
 	int pipes[2]; pipes[0] = -1; pipes[1] = -1;
 	int fd_to_replace = -1;
 	if (daemonCore->Create_Pipe(pipes, true) == -1 || pipes[0] == -1) {
