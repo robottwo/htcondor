@@ -411,6 +411,9 @@ ProcFamilyMonitor::notify_event(int fd)
 		dprintf(D_PROCFAMILY,
 			"Got an unexpected notification for ProcFamily monitor.\n");
 		return;
+	} else {
+		dprintf(D_PROCFAMILY,
+			"Killed family due to OOM event.\n");
 	}
 	unsubscribe_oom_event(fd);
 }

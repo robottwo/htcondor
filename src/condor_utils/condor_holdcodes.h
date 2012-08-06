@@ -128,4 +128,6 @@ const int CONDOR_HOLD_CODE_GlexecChownSandboxToCondor = 30;
 
 const int CONDOR_HOLD_CODE_PrivsepChownSandboxToCondor = 31;
 
+const int CONDOR_HOLD_CODE_JobOutOfResources = 32;
+
 #endif
