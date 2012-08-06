@@ -684,10 +684,10 @@ VanillaProc::setupOOMScore(int new_score)
 	if (new_score) // Done to suppress compiler warnings.
 		return 0;
 	return 0;
-#endif
+#else
 	TemporaryPrivSentry sentry(PRIV_ROOT);
 	// oom_adj is deprecated on modern kernels and causes a deprecation warning when used.
-	int oom_score_fd = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
+	int oom_score_fd = open("/proc/self/oom_score_adj", O_WRONLY);
 	if (oom_score_fd == -1) {
 		if (errno != ENOENT) {
 			dprintf(D_ALWAYS,
@@ -695,7 +695,7 @@ VanillaProc::setupOOMScore(int new_score)
 				errno, strerror(errno));
 			return 1;
 		} else {
-			int oom_score_fd = open("/proc/self/oom_adj", O_WRONLY | O_CLOEXEC);
+			int oom_score_fd = open("/proc/self/oom_adj", O_WRONLY);
 			if (oom_score_fd == -1) {
 				dprintf(D_ALWAYS,
 					"Unable to open oom_adj for the starter: (errno=%u, %s)\n",
@@ -724,6 +724,7 @@ VanillaProc::setupOOMScore(int new_score)
 	}
 	close(oom_score_fd);
 	return 0;
+#endif
 }
 
 int
@@ -731,7 +732,7 @@ VanillaProc::setupOOMEvent(const std::string &cgroup_string)
 {
 #if !(defined(HAVE_EVENTFD) && defined(HAVE_EXT_LIBCGROUP))
 	return 0;
-#endif
+#else
 	// Initialize the event descriptor
 	m_oom_efd = eventfd(0, EFD_CLOEXEC);
 	if (m_oom_efd == -1) {
@@ -852,5 +853,6 @@ VanillaProc::setupOOMEvent(const std::string &cgroup_string)
 	// Inform DC we want to recieve notifications from this FD.
 	daemonCore->Register_Pipe(pipes[0],"OOM event fd", static_cast<PipeHandlercpp>(&VanillaProc::outOfMemoryEvent),"OOM Event Handler",this,HANDLE_READ);
 	return 0;
+#endif
 }
 
