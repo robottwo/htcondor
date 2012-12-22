@@ -54,6 +54,7 @@ Value( )
 Value::
 Value(const Value &value)
 {
+	valueType = UNDEFINED_VALUE;
     CopyFrom(value);
     return;
 }
@@ -509,9 +510,7 @@ bool convertValueToRealValue(const Value value, Value &realValue)
 				case 'T': nf = Value::T_FACTOR; break;
 				case '\0': nf = Value::NO_FACTOR; break;
 				default:
-                    nf = Value::NO_FACTOR; // Prevent uninitialized variable warning
-					realValue.SetErrorValue();
-					could_convert = false;
+                    nf = Value::NO_FACTOR;
                     break;
 			}
             if (could_convert) {
@@ -599,9 +598,7 @@ bool convertValueToIntegerValue(const Value value, Value &integerValue)
                 case 'T':  nf = Value::T_FACTOR; break;
                 case '\0': nf = Value::NO_FACTOR; break;
                 default:  
-                    nf = Value::NO_FACTOR; // avoid uninitialized warning
-                    integerValue.SetErrorValue( );
-                    could_convert = false;
+                    nf = Value::NO_FACTOR;
                     break;
                 }
                 if (could_convert) {

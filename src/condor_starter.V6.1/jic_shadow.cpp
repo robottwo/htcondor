@@ -741,10 +741,13 @@ JICShadow::notifyJobExit( int exit_status, int reason, UserProc*
 	updateStartd(&ad, true);
 
 	if( !had_hold ) {
-		if( REMOTE_CONDOR_job_exit(exit_status, reason, &ad) < 0 ) {    
+		if( REMOTE_CONDOR_job_exit(exit_status, reason, &ad) < 0) {
 			dprintf( D_ALWAYS, "Failed to send job exit status to shadow\n" );
-			job_cleanup_disconnected = true;
-			return false;
+			if (job_universe != CONDOR_UNIVERSE_PARALLEL)
+			{
+				job_cleanup_disconnected = true;
+				return false;
+			}
 		}
 	}
 
@@ -1471,7 +1474,7 @@ JICShadow::getJobStdFile( const char* attr_name )
 			base = tmp;
 		}
 		if( ! fullpath(base) ) {	// prepend full path
-			filename.sprintf( "%s%c", job_iwd, DIR_DELIM_CHAR );
+			filename.formatstr( "%s%c", job_iwd, DIR_DELIM_CHAR );
 		}
 		filename += base;
 	}
@@ -1759,13 +1762,29 @@ JICShadow::updateX509Proxy(int cmd, ReliSock * s)
 	// now, if the update was successful, and we are using glexec, make sure we
 	// set a timer to put the job on hold before the proxy expires and we lose
 	// control of it.
+	if( retval ) {
+		setX509ProxyExpirationTimer();
+	}
+
+	return retval;
+}
+
+void
+JICShadow::setX509ProxyExpirationTimer()
+{
+	MyString path;
+	if( ! job_ad->LookupString(ATTR_X509_USER_PROXY, path) ) {
+		return;
+	}
+	const char * proxyfilename = condor_basename(path.Value());
+
 #if defined(LINUX)
 	GLExecPrivSepHelper* gpsh = Starter->glexecPrivSepHelper();
 #else
 	// dummy for non-linux platforms.
 	int* gpsh = NULL;
 #endif
-	if(retval && gpsh) {
+	if(gpsh) {
 		// if there was a timer registered, cancel it
 		if( m_proxy_expiration_tid != -1 ) {
 			daemonCore->Cancel_Timer(m_proxy_expiration_tid);
@@ -1773,27 +1792,36 @@ JICShadow::updateX509Proxy(int cmd, ReliSock * s)
 		}
 
 		// for the new timer, start with the payload proxy expiration time
-		time_t expiration = x509_proxy_expiration_time(path.Value());
+		time_t expiration = x509_proxy_expiration_time(proxyfilename);
 		time_t now = time(NULL);
 
-		// now subtract the configurable time allowed for eviction
-		// years of careful research show the default should be one minute.
-		int evict_window = param_integer("PROXY_EXPIRING_EVICTION_TIME", 60);
-		time_t expiration_delta = (expiration - now) - evict_window;
+		if( (int)expiration == -1 ) {
+			char const *err = x509_error_string();
+			dprintf(D_ALWAYS,"Failed to read proxy expiration time for %s: %s\n",
+					proxyfilename,
+					err ? err : "");
+		}
+		else {
+				// now subtract the configurable time allowed for eviction
+				// years of careful research show the default should be one minute.
+			int evict_window = param_integer("PROXY_EXPIRING_EVICTION_TIME", 60);
+			int expiration_delta = (expiration - now) - evict_window;
+			if( expiration_delta < 0 ) {
+				expiration_delta = 0;
+			}
 
-		m_proxy_expiration_tid = daemonCore->Register_Timer(
-			expiration_delta,
-			(TimerHandlercpp)&JICShadow::proxyExpiring,
-			"proxy expiring",
-			this );
-		if (m_proxy_expiration_tid > 0) {
-			dprintf(D_FULLDEBUG, "Set timer %i for PROXY_EXPIRING to %i\n", m_proxy_expiration_tid, (int)expiration);
-		} else {
-			dprintf(D_ALWAYS, "FAILED to set timer for PROXY_EXPIRING: %i\n", m_proxy_expiration_tid);
+			m_proxy_expiration_tid = daemonCore->Register_Timer(
+				expiration_delta,
+				(TimerHandlercpp)&JICShadow::proxyExpiring,
+				"proxy expiring",
+				this );
+			if (m_proxy_expiration_tid > 0) {
+				dprintf(D_FULLDEBUG, "Set timer %i for PROXY_EXPIRING to %d seconds from now (proxy expires at time %i)\n", m_proxy_expiration_tid, (int)expiration_delta, (int)expiration);
+			} else {
+				dprintf(D_ALWAYS, "FAILED to set timer for PROXY_EXPIRING: %i\n", m_proxy_expiration_tid);
+			}
 		}
 	}
-
-	return retval;
 }
 
 
@@ -1801,19 +1829,30 @@ bool
 JICShadow::publishUpdateAd( ClassAd* ad )
 {
 	filesize_t execsz = 0;
-	char buf[200];
 
-	// if there is a filetrans object, then let's send the current
-	// size of the starter execute directory back to the shadow.  this
-	// way the ATTR_DISK_USAGE will be updated, and we won't end
-	// up on a machine without enough local disk space.
-	if ( filetrans ) {
-		Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
-		execsz = starter_dir.GetDirectorySize();
-		sprintf( buf, "%s=%lu", ATTR_DISK_USAGE, (long unsigned)((execsz+1023)/1024) ); 
-		ad->InsertOrUpdate( buf );
-
+	// if we are using PrivSep, we need to use that mechanism to calculate
+	// the disk usage, as we don't have privs to traverse the users's execute
+	// dir.
+	CondorPrivSepHelper* privsep_helper = Starter->condorPrivSepHelper();
+	if (privsep_helper) {
+		off_t total_usage = 0;
+		if (privsep_helper->get_exec_dir_usage( &total_usage)) {
+			ad->Assign(ATTR_DISK_USAGE, (unsigned long)((total_usage+1023)/1024) );
+		}
+	} else{
+		// if there is a filetrans object, then let's send the current
+		// size of the starter execute directory back to the shadow.  this
+		// way the ATTR_DISK_USAGE will be updated, and we won't end
+		// up on a machine without enough local disk space.
+		if ( filetrans ) {
+			// make sure this computation is done with user priv, since that who
+			// owns the directory and it may not be world-readable
+			Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
+			execsz = starter_dir.GetDirectorySize();
+			ad->Assign(ATTR_DISK_USAGE, (unsigned long)((execsz+1023)/1024) ); 
+		}
 	}
+
 	MyString spooled_files;
 	if( job_ad->LookupString(ATTR_SPOOLED_OUTPUT_FILES,spooled_files) && spooled_files.Length() > 0 )
 	{
@@ -1848,6 +1887,8 @@ JICShadow::publishJobExitAd( ClassAd* ad )
 	// way the ATTR_DISK_USAGE will be updated, and we won't end
 	// up on a machine without enough local disk space.
 	if ( filetrans ) {
+		// make sure this computation is done with user priv, since that who
+		// owns the directory and it may not be world-readable
 		Directory starter_dir( Starter->GetWorkingDir(), PRIV_USER );
 		execsz = starter_dir.GetDirectorySize();
 		sprintf( buf, "%s=%lu", ATTR_DISK_USAGE, (long unsigned)((execsz+1023)/1024) ); 
@@ -1969,7 +2010,7 @@ JICShadow::beginFileTransfer( void )
 		ASSERT( filetrans->Init(job_ad, false, PRIV_USER) );
 		filetrans->setSecuritySession(m_filetrans_sec_session);
 		filetrans->RegisterCallback(
-				  (FileTransferHandler)&JICShadow::transferCompleted,this );
+				  (FileTransferHandlerCpp)&JICShadow::transferCompleted,this );
 
 		if ( shadow_version == NULL ) {
 			dprintf( D_ALWAYS, "Can't determine shadow version for FileTransfer!\n" );
@@ -2029,6 +2070,8 @@ JICShadow::transferCompleted( FileTransfer *ftrans )
 			set_priv( saved_priv );
 		}
 	}
+
+	setX509ProxyExpirationTimer();
 
 		// Now that we're done, let our parent class do its thing.
 	JobInfoCommunicator::setupJobEnvironment();
@@ -2109,7 +2152,7 @@ JICShadow::initIOProxy( void )
 	}
 
 	if( want_io_proxy || job_universe==CONDOR_UNIVERSE_JAVA ) {
-		io_proxy_config_file.sprintf( "%s%cchirp.config",
+		io_proxy_config_file.formatstr( "%s%cchirp.config",
 				 Starter->GetWorkingDir(), DIR_DELIM_CHAR );
 		if( !io_proxy.init(io_proxy_config_file.Value()) ) {
 			dprintf( D_FAILURE|D_ALWAYS, 

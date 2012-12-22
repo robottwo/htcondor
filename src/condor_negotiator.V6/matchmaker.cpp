@@ -265,6 +265,7 @@ Matchmaker ()
 	cachedName = NULL;
 	cachedAddr = NULL;
 
+	want_globaljobprio = false;
 	want_matchlist_caching = false;
 	ConsiderPreemption = true;
 	want_nonblocking_startd_contact = true;
@@ -615,6 +616,7 @@ reinitialize ()
 		free( preferred_collector );
 	}
 
+	want_globaljobprio = param_boolean("USE_GLOBAL_JOB_PRIOS",false);
 	want_matchlist_caching = param_boolean("NEGOTIATOR_MATCHLIST_CACHING",true);
 	ConsiderPreemption = param_boolean("NEGOTIATOR_CONSIDER_PREEMPTION",true);
 	want_inform_startd = param_boolean("NEGOTIATOR_INFORM_STARTD", true);
@@ -1589,6 +1591,16 @@ negotiationTime ()
         }
     }
 
+    // Leave this in as an easter egg for dev/testing purposes.
+    // Like NEG_SLEEP, but this one is not dependent on getting into the
+    // negotiation loops to take effect.
+    int insert_duration = param_integer("INSERT_NEGOTIATOR_CYCLE_TEST_DURATION", 0);
+    if (insert_duration > 0) {
+        dprintf(D_ALWAYS, "begin sleep: %d seconds\n", insert_duration);
+        sleep(insert_duration);
+        dprintf(D_ALWAYS, "end sleep: %d seconds\n", insert_duration);
+    }
+
     // ----- Done with the negotiation cycle
     dprintf( D_ALWAYS, "---------- Finished Negotiation Cycle ----------\n" );
 
@@ -1615,6 +1627,11 @@ negotiationTime ()
 	if (param_boolean("NEGOTIATOR_UPDATE_AFTER_CYCLE", false)) {
 		updateCollector();
 	}
+
+    // reduce negotiator delay drift
+    daemonCore->Reset_Timer(negotiation_timerID, 
+                            std::max(cycle_delay,  NegotiatorInterval - negotiation_cycle_stats[0]->duration), 
+                            NegotiatorInterval);
 }
 
 
@@ -1713,13 +1730,13 @@ void Matchmaker::hgq_construct_tree() {
 
         // group quota setting 
         MyString vname;
-        vname.sprintf("GROUP_QUOTA_%s", gname.c_str());
+        vname.formatstr("GROUP_QUOTA_%s", gname.c_str());
         double quota = param_double(vname.Value(), -1.0, 0, INT_MAX);
         if (quota >= 0) {
             group->config_quota = quota;
             group->static_quota = true;
         } else {
-            vname.sprintf("GROUP_QUOTA_DYNAMIC_%s", gname.c_str());
+            vname.formatstr("GROUP_QUOTA_DYNAMIC_%s", gname.c_str());
             quota = param_double(vname.Value(), -1.0, 0.0, 1.0);
             if (quota >= 0) {
                 group->config_quota = quota;
@@ -1738,9 +1755,9 @@ void Matchmaker::hgq_construct_tree() {
         }
 
         // accept surplus
-	    vname.sprintf("GROUP_ACCEPT_SURPLUS_%s", gname.c_str());
+	    vname.formatstr("GROUP_ACCEPT_SURPLUS_%s", gname.c_str());
         group->accept_surplus = param_boolean(vname.Value(), default_accept_surplus);
-	    vname.sprintf("GROUP_AUTOREGROUP_%s", gname.c_str());
+	    vname.formatstr("GROUP_AUTOREGROUP_%s", gname.c_str());
         group->autoregroup = param_boolean(vname.Value(), default_autoregroup);
         if (group->autoregroup) autoregroup = true;
         if (group->accept_surplus) accept_surplus = true;
@@ -2278,6 +2295,85 @@ void filter_submitters_no_idle(ClassAdListDoesNotDeleteAds& submitterAds) {
     }
 }
 
+/*
+ consolidate_globaljobprio_submitter_ads()
+ Scan through scheddAds looking for globaljobprio submitter ads, consolidating
+ them into a minimal set of submitter ads that contain JOBPRIO_MIN and
+ JOBPRIO_MAX attributes to reflect job priority ranges.
+ Return true on success and/or want_globaljobprio should be true,
+ false if there is a data structure inconsistency and/or want_globaljobprio should be false.
+*/
+bool Matchmaker::
+consolidate_globaljobprio_submitter_ads(ClassAdListDoesNotDeleteAds& scheddAds)
+{
+	// nothing to do if unless want_globaljobprio is true...
+	if (!want_globaljobprio) {
+		return false;  // keep want_globajobprio false
+	}
+
+	ClassAd *curr_ad = NULL;
+	ClassAd *prev_ad = NULL;
+	MyString curr_name, curr_addr, prev_name, prev_addr;
+	int min_prio=INT_MAX, max_prio=INT_MIN; // initialize to shut gcc up, the loop always sets before using.
+
+	scheddAds.Open();
+	while ( (curr_ad = scheddAds.Next()) )
+	{
+		// skip this submitter if we cannot identify its origin
+		if (!curr_ad->LookupString(ATTR_NAME,curr_name)) continue;
+		if (!curr_ad->LookupString(ATTR_SCHEDD_IP_ADDR,curr_addr)) continue;
+
+		// In obtainAdsFromCollector() inserted an ATTR_JOB_PRIO attribute; if
+		// it is not there, then the value of want_globaljobprio must have changed
+		// or something. In any event, if we cannot find what we need, don't honor
+		// the request for USE_GLOBAL_JOB_PRIOS for this negotiation cycle.
+		int curr_prio=0;
+		if (!curr_ad->LookupInteger(ATTR_JOB_PRIO,curr_prio)) {
+			dprintf(D_ALWAYS,
+				"WARNING: internal inconsistancy, ignoring USE_GLOBAL_JOB_PRIOS=True until next reconfig\n");
+			return false;
+		}
+
+		// If this ad has no ATTR_JOB_PRIO_ARRAY, then we don't want to assign
+		// any JOBPRIO_MIN or MAX, as this must be a schedd that does not (or cannot)
+		// play the global job prios game.  So just continue along.
+		if ( !curr_ad->Lookup(ATTR_JOB_PRIO_ARRAY) ) continue;
+
+		// If this ad is not from the same user and schedd previously
+		// seen, insert JOBPRIO_MIX and MAX attributes, update our notion
+		// of "previously seen", and continue along.
+		if ( curr_name != prev_name || curr_addr != prev_addr ) {
+			curr_ad->Assign("JOBPRIO_MIN",curr_prio);
+			curr_ad->Assign("JOBPRIO_MAX",curr_prio);
+			prev_ad = curr_ad;
+			prev_name = curr_name;
+			prev_addr = curr_addr;
+			max_prio = min_prio = curr_prio;
+			continue;
+		}
+
+		// Some sanity assertions here.
+		ASSERT(prev_ad);
+		ASSERT(curr_ad);
+
+		// Here is the meat: consolidate this submitter ad into the
+		// previous one, if we can...
+		// update the previous ad to negotiate for this priority as well
+		if (curr_prio < min_prio) {
+			prev_ad->Assign("JOBPRIO_MIN",curr_prio);
+			min_prio = curr_prio;
+		}
+		if (curr_prio > max_prio) {
+			prev_ad->Assign("JOBPRIO_MAX",curr_prio);
+			max_prio = curr_prio;
+		}
+		// and now may as well delete the curr_ad, since negotiation will
+		// be handled by the first ad for this user/schedd_addr
+		scheddAds.Remove(curr_ad);
+	}	// end of while iterate through scheddAds
+
+	return true;
+}
 
 int Matchmaker::
 negotiateWithGroup ( int untrimmed_num_startds,
@@ -2308,7 +2404,6 @@ negotiateWithGroup ( int untrimmed_num_startds,
 	int			totalTime;
 	int			num_idle_jobs;
 	time_t		startTime;
-	
 
     int duration_phase3 = 0;
     time_t start_time_phase4 = time(NULL);
@@ -2372,10 +2467,19 @@ negotiateWithGroup ( int untrimmed_num_startds,
             // This only needs to be done once: do it on the 1st spin, prior to 
             // iterating over submitter ads so they negotiate in sorted order.
             // The sort ordering function makes use of a submitter starvation
-            // attribute that is computed in calculatePieLeft, above
+            // attribute that is computed in calculatePieLeft, above.
+			// The sort order function also makes use of job priority information
+			// if want_globaljobprio is true.
             time_t start_time_phase3 = time(NULL);
             dprintf(D_ALWAYS, "Phase 3:  Sorting submitter ads by priority ...\n");
             scheddAds.Sort((lessThanFunc)comparisonFunction, this);
+
+			// Now that the submitter ad list (scheddAds) is sorted, we can
+			// scan through it looking for globaljobprio submitter ads, consolidating
+			// them into a minimal set of submitter ads that contain JOBPRIO_MIN and
+			// JOBPRIO_MAX attributes to reflect job priority ranges.
+			want_globaljobprio = consolidate_globaljobprio_submitter_ads(scheddAds);
+
             duration_phase3 += time(NULL) - start_time_phase3;
         }
 
@@ -2488,7 +2592,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
 					submitterAbsShare);
 				MyString starvation;
 				if( submitterLimitStarved > 0 ) {
-					starvation.sprintf(" (starved %f)",submitterLimitStarved);
+					starvation.formatstr(" (starved %f)",submitterLimitStarved);
 				}
 				dprintf (D_FULLDEBUG, "    submitterLimit    = %f%s\n",
 					submitterLimit, starvation.Value());
@@ -2625,7 +2729,17 @@ comparisonFunction (AttrList *ad1, AttrList *ad2, void *m)
     if (!ad1->LookupFloat("SubmitterStarvation", sr1)) sr1 = FLT_MAX;
     if (!ad2->LookupFloat("SubmitterStarvation", sr2)) sr2 = FLT_MAX;
 
-    // secondary sort on submitter starvation
+	// secondary sort on job prio, if want_globaljobprio is true (see gt #3218)
+	if ( mm->want_globaljobprio ) {
+		int p1 = INT_MIN;	// no priority should be treated as lowest priority
+		int p2 = INT_MIN;
+		ad1->LookupInteger(ATTR_JOB_PRIO,p1);
+		ad2->LookupInteger(ATTR_JOB_PRIO,p2);
+		if (p1 > p2) return true;	// note: higher job prio is "better"
+		if (p1 < p2) return false;
+	}
+
+    // tertiary sort on submitter starvation
     if (sr1 < sr2) return true;
     if (sr1 > sr2) return false;
 
@@ -2724,18 +2838,30 @@ obtainAdsFromCollector (
     publicQuery.addORConstraint("(MyType == \"Scheduler\") || (MyType == \"Submitter\")");
     if (strSlotConstraint && strSlotConstraint[0]) {
         MyString machine;
-        machine.sprintf("((MyType == \"Machine\") && (%s))", strSlotConstraint);
+        machine.formatstr("((MyType == \"Machine\") && (%s))", strSlotConstraint);
         publicQuery.addORConstraint(machine.Value());
     } else {
         publicQuery.addORConstraint("(MyType == \"Machine\")");
     }
 
+	// If preemption is disabled, we only need a handful of attrs from claimed ads.
+	// Ask for that projection.
+
+	if (!ConsiderPreemption) {
+		const char *projectionString =
+			"ifThenElse(State == \"Claimed\",\"Name State Activity StartdIpAddr AccountingGroup Owner RemoteUser Requirements\",\"\") ";
+		publicQuery.setDesiredAttrsExpr(projectionString);
+
+		dprintf(D_ALWAYS, "Not considering preemption, therefore constraining idle machines with %s\n", projectionString);
+	}
+
+	
     CondorError errstack;
 	dprintf(D_ALWAYS, "  Getting Scheduler, Submitter and Machine ads ...\n");
 	result = collects->query (publicQuery, allAds, &errstack);
 	if( result!=Q_OK ) {
 		dprintf(D_ALWAYS, "Couldn't fetch ads: %s\n", 
-           errstack.code() ? errstack.getFullText(false) : getStrQueryResult(result)
+           errstack.code() ? errstack.getFullText(false).c_str() : getStrQueryResult(result)
            );
 		return false;
 	}
@@ -2930,12 +3056,58 @@ obtainAdsFromCollector (
             }
 
     		ad->Assign(ATTR_TOTAL_TIME_IN_CYCLE, 0);
-			scheddAds.Insert(ad);
+
+			// Now all that is left is to insert the submitter ad
+			// into our list. However, if want_globaljobprio is true,
+			// we insert a submitter ad for each job priority in the submitter
+			// ad's job_prio_array attribute.  See gittrac #3218.
+			if ( want_globaljobprio ) {
+				MyString jobprioarray;
+				StringList jobprios;
+
+				if (!ad->LookupString(ATTR_JOB_PRIO_ARRAY,jobprioarray)) {
+					// By design, if negotiator has want_globaljobprio and a schedd
+					// does not give us a job prio array, behave as if this SubmitterAd had a
+					// JobPrioArray attribute with a single value w/ the worst job priority
+					jobprioarray = INT_MIN;
+				}
+
+				jobprios.initializeFromString( jobprioarray.Value() );
+				jobprios.rewind();
+				char *prio = NULL;
+				// Insert a group of submitter ads with one ATTR_JOB_PRIO value
+				// taken from the list in ATTR_JOB_PRIO_ARRAY.
+				while ( (prio = jobprios.next()) != NULL ) {
+					ClassAd *adCopy = new ClassAd( *ad );
+					ASSERT(adCopy);
+					adCopy->Assign(ATTR_JOB_PRIO,atoi(prio));
+					scheddAds.Insert(adCopy);
+				}
+			} else {
+				// want_globaljobprio is false, so just insert the submitter
+				// ad into our list as-is
+				scheddAds.Insert(ad);
+			}
 		}
         free(remoteHost);
         remoteHost = NULL;
 	}
 	allAds.Close();
+
+	// In the processing of allAds above, if want_globaljobprio is true,
+	// we may have created additional submitter ads and inserted them
+	// into scheddAds on the fly.
+	// As ads in scheddAds are not deleted when scheddAds is destroyed,
+	// we must be certain to insert these ads into allAds so it gets deleted.
+	// To accomplish this, we simply iterate through scheddAds and insert all
+	// ads found into scheddAds. No worries about duplicates since the Insert()
+	// method checks for duplicates already.
+	if (want_globaljobprio) {
+		scheddAds.Open();
+		while( (ad=scheddAds.Next()) ) {
+			allAds.Insert(ad);
+		}
+	}
 
 	dprintf(D_ALWAYS,"  Getting startd private ads ...\n");
 	ClassAdList startdPvtAdList;
@@ -3071,7 +3243,7 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
 	// Used for log messages to identify the schedd.
 	// Not for other uses, as it may change!
 	MyString schedd_id;
-	schedd_id.sprintf("%s (%s)", scheddName, scheddAddr.Value());
+	schedd_id.formatstr("%s (%s)", scheddName, scheddAddr.Value());
 	
 	// 0.  connect to the schedd --- ask the cache for a connection
 	sock = sockCache->findReliSock( scheddAddr.Value() );
@@ -3114,9 +3286,26 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
 
 	sock->encode();
 	if( negotiate_cmd == NEGOTIATE ) {
+		// Here we create a negotiation ClassAd to pass parameters to the
+		// schedd's negotiation method.
 		ClassAd negotiate_ad;
+		int jmin, jmax;
+		// Tell the schedd to limit negotiation to this owner
 		negotiate_ad.Assign(ATTR_OWNER,scheddName);
+		// Tell the schedd to limit negotiation to this job priority range
+		if ( want_globaljobprio && scheddAd->LookupInteger("JOBPRIO_MIN",jmin) ) {
+			if (!scheddAd->LookupInteger("JOBPRIO_MAX",jmax)) {
+				EXCEPT("SubmitterAd with JOBPRIO_MIN attr, but no JOBPRIO_MAX\n");
+			}
+			negotiate_ad.Assign("JOBPRIO_MIN",jmin);
+			negotiate_ad.Assign("JOBPRIO_MAX",jmax);
+			dprintf (D_ALWAYS | D_MATCH,
+				"    USE_GLOBAL_JOB_PRIOS limit to jobprios between %d and %d\n",
+				jmin, jmax);
+		}
+		// Tell the schedd what sigificant attributes we found in the startd ads
 		negotiate_ad.Assign(ATTR_AUTO_CLUSTER_ATTRS,job_attr_references ? job_attr_references : "");
+		// Tell the schedd a submitter tag value (used for flocking levels)
 		negotiate_ad.Assign(ATTR_SUBMITTER_TAG,submitter_tag.Value());
 		if( !negotiate_ad.put( *sock ) ) {
 			dprintf (D_ALWAYS, "    Failed to send negotiation header to %s\n",
@@ -3491,7 +3680,7 @@ updateNegCycleEndTime(time_t startTime, ClassAd *submitter) {
 
 	endTime = time(NULL);
 	submitter->LookupInteger(ATTR_TOTAL_TIME_IN_CYCLE, oldTotalTime);
-	buffer.sprintf("%s = %ld", ATTR_TOTAL_TIME_IN_CYCLE, (oldTotalTime + 
+	buffer.formatstr("%s = %ld", ATTR_TOTAL_TIME_IN_CYCLE, (oldTotalTime + 
 					(endTime - startTime)) );
 	submitter->InsertOrUpdate(buffer.Value());
 }
@@ -4246,11 +4435,11 @@ matchmakingProtocol (ClassAd &request, ClassAd *offer,
 		return MM_ERROR;
 	}
 
-	if (offer->LookupString(ATTR_REMOTE_USER, remoteOwner) == 0) {
+	if (offer->LookupString(ATTR_REMOTE_USER, remoteOwner, sizeof(remoteOwner)) == 0) {
 		strcpy(remoteOwner, "none");
 	}
-	if (offer->LookupString(ATTR_ACCOUNTING_GROUP, accountingGroup)) {
-		sprintf(remoteUser,"%s (%s=%s)",
+	if (offer->LookupString(ATTR_ACCOUNTING_GROUP, accountingGroup, sizeof(accountingGroup))) {
+		formatstr(remoteUser,"%s (%s=%s)",
 			remoteOwner,ATTR_ACCOUNTING_GROUP,accountingGroup);
 	} else {
 		remoteUser = remoteOwner;
@@ -4482,12 +4671,12 @@ addRemoteUserPrios( ClassAd	*ad )
 	{
 		prio = (float) accountant.GetPriority( remoteUser.Value() );
 		ad->Assign(ATTR_REMOTE_USER_PRIO, prio);
-		expr.sprintf("%s(\"%s\")",RESOURCES_IN_USE_BY_USER_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
+		expr.formatstr("%s(\"%s\")",RESOURCES_IN_USE_BY_USER_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
 		ad->AssignExpr(ATTR_REMOTE_USER_RESOURCES_IN_USE,expr.Value());
 		if (getGroupInfoFromUserId(remoteUser.Value(), temp_groupName, temp_groupQuota, temp_groupUsage)) {
 			// this is a group, so enter group usage info
             ad->Assign(ATTR_REMOTE_GROUP, temp_groupName);
-			expr.sprintf("%s(\"%s\")",RESOURCES_IN_USE_BY_USERS_GROUP_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
+			expr.formatstr("%s(\"%s\")",RESOURCES_IN_USE_BY_USERS_GROUP_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
 			ad->AssignExpr(ATTR_REMOTE_GROUP_RESOURCES_IN_USE,expr.Value());
 			ad->Assign(ATTR_REMOTE_GROUP_QUOTA,temp_groupQuota);
 		}
@@ -4515,11 +4704,11 @@ addRemoteUserPrios( ClassAd	*ad )
 	}
 		// This won't fire if total_slots is still 0...
 	for(i = 1; i <= total_slots; i++) {
-		slot_prefix.sprintf("%s%d_", resource_prefix, i);
-		buffer.sprintf("%s%s", slot_prefix.Value(), ATTR_PREEMPTING_ACCOUNTING_GROUP);
-		buffer1.sprintf("%s%s", slot_prefix.Value(), ATTR_PREEMPTING_USER);
-		buffer2.sprintf("%s%s", slot_prefix.Value(), ATTR_ACCOUNTING_GROUP);
-		buffer3.sprintf("%s%s", slot_prefix.Value(), ATTR_REMOTE_USER);
+		slot_prefix.formatstr("%s%d_", resource_prefix, i);
+		buffer.formatstr("%s%s", slot_prefix.Value(), ATTR_PREEMPTING_ACCOUNTING_GROUP);
+		buffer1.formatstr("%s%s", slot_prefix.Value(), ATTR_PREEMPTING_USER);
+		buffer2.formatstr("%s%s", slot_prefix.Value(), ATTR_ACCOUNTING_GROUP);
+		buffer3.formatstr("%s%s", slot_prefix.Value(), ATTR_REMOTE_USER);
 			// If there is a preempting user, use that for computing remote user prio.
 		if( ad->LookupString( buffer.Value() , remoteUser ) ||
 			ad->LookupString( buffer1.Value() , remoteUser ) ||
@@ -4529,21 +4718,21 @@ addRemoteUserPrios( ClassAd	*ad )
 				// If there is a user on that VM, stick that user's priority
 				// information into the ad	
 			prio = (float) accountant.GetPriority( remoteUser.Value() );
-			buffer.sprintf("%s%s", slot_prefix.Value(), 
+			buffer.formatstr("%s%s", slot_prefix.Value(), 
 					ATTR_REMOTE_USER_PRIO);
 			ad->Assign(buffer.Value(),prio);
-			buffer.sprintf("%s%s", slot_prefix.Value(), 
+			buffer.formatstr("%s%s", slot_prefix.Value(), 
 					ATTR_REMOTE_USER_RESOURCES_IN_USE);
-			expr.sprintf("%s(\"%s\")",RESOURCES_IN_USE_BY_USER_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
+			expr.formatstr("%s(\"%s\")",RESOURCES_IN_USE_BY_USER_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
 			ad->AssignExpr(buffer.Value(),expr.Value());
 			if (getGroupInfoFromUserId(remoteUser.Value(), temp_groupName, temp_groupQuota, temp_groupUsage)) {
 				// this is a group, so enter group usage info
-				buffer.sprintf("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP);
+				buffer.formatstr("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP);
 				ad->Assign( buffer.Value(), temp_groupName );
-				buffer.sprintf("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP_RESOURCES_IN_USE);
-				expr.sprintf("%s(\"%s\")",RESOURCES_IN_USE_BY_USERS_GROUP_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
+				buffer.formatstr("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP_RESOURCES_IN_USE);
+				expr.formatstr("%s(\"%s\")",RESOURCES_IN_USE_BY_USERS_GROUP_FN_NAME,ClassAd::EscapeStringValue(remoteUser.Value(),expr_buffer));
 				ad->AssignExpr( buffer.Value(), expr.Value() );
-				buffer.sprintf("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP_QUOTA);
+				buffer.formatstr("%s%s", slot_prefix.Value(), ATTR_REMOTE_GROUP_QUOTA);
 				ad->Assign( buffer.Value(), temp_groupQuota );
 			}
 		}	
@@ -4899,12 +5088,12 @@ init_public_ad()
 	}
 	publicAd->Assign(ATTR_NAME, NegotiatorName );
 
-	line.sprintf ("%s = \"%s\"", ATTR_NEGOTIATOR_IP_ADDR,
+	line.formatstr ("%s = \"%s\"", ATTR_NEGOTIATOR_IP_ADDR,
 			daemonCore->InfoCommandSinfulString() );
 	publicAd->Insert(line.Value());
 
 #if !defined(WIN32)
-	line.sprintf("%s = %d", ATTR_REAL_UID, (int)getuid() );
+	line.formatstr("%s = %d", ATTR_REAL_UID, (int)getuid() );
 	publicAd->Insert(line.Value());
 #endif
 
@@ -4958,7 +5147,7 @@ Matchmaker::invalidateNegotiatorAd( void )
 	cmd_ad.SetMyTypeName( QUERY_ADTYPE );
 	cmd_ad.SetTargetTypeName( NEGOTIATOR_ADTYPE );
 
-	line.sprintf( "%s = TARGET.%s == \"%s\"", ATTR_REQUIREMENTS,
+	line.formatstr( "%s = TARGET.%s == \"%s\"", ATTR_REQUIREMENTS,
 				  ATTR_NAME,
 				  NegotiatorName );
 	cmd_ad.Insert( line.Value() );
@@ -4984,7 +5173,7 @@ void Matchmaker::insert_into_rejects(char const *userName, ClassAd& job)
 
 	job.LookupInteger (ATTR_CLUSTER_ID, cluster);
 	job.LookupInteger (ATTR_PROC_ID, proc);
-	job.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid); 
+	job.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid, sizeof(globaljobid)); 
 	get_scheddname_from_gjid(globaljobid,scheddName);
 //	machine.LookupString(ATTR_NAME, startdname);
 
@@ -5024,9 +5213,9 @@ void Matchmaker::insert_into_matches(char const * userName,ClassAd& request, Cla
 
 	request.LookupInteger (ATTR_CLUSTER_ID, cluster);
 	request.LookupInteger (ATTR_PROC_ID, proc);
-	request.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid); 
+	request.LookupString( ATTR_GLOBAL_JOB_ID, globaljobid, sizeof(globaljobid)); 
 	get_scheddname_from_gjid(globaljobid,scheddName);
-	offer.LookupString( ATTR_NAME, startdname); 
+	offer.LookupString( ATTR_NAME, startdname, sizeof(startdname)); 
 
 	snprintf(tmp, 512, "match_time = %d", (int) clock);
 	tmpClP->Insert(tmp);
@@ -5048,7 +5237,7 @@ void Matchmaker::insert_into_matches(char const * userName,ClassAd& request, Cla
 	snprintf(tmp, 512, "machine_id = \"%s\"", startdname);
 	tmpClP->Insert(tmp);
 
-	if(offer.LookupString( ATTR_REMOTE_USER, remote_user) != 0)
+	if(offer.LookupString( ATTR_REMOTE_USER, remote_user, sizeof(remote_user)) != 0)
 	{
 		remote_prio = (float) accountant.GetPriority(remote_user);
 
@@ -5136,7 +5325,7 @@ void Matchmaker::RegisterAttemptedOfflineMatch( ClassAd *job_ad, ClassAd *startd
 				// figure out the prefix
 			int prefix_len = strcspn(name.Value(),"0123456789");
 			if( prefix_len < at - name.Value() ) {
-				slot1_name.sprintf("%.*s1%s",prefix_len,name.Value(),at);
+				slot1_name.formatstr("%.*s1%s",prefix_len,name.Value(),at);
 			}
 		}
 	}
@@ -5147,7 +5336,7 @@ void Matchmaker::RegisterAttemptedOfflineMatch( ClassAd *job_ad, ClassAd *startd
 		slot1_update_ad.Assign(ATTR_NAME,slot1_name);
 		slot1_update_ad.CopyAttribute(ATTR_STARTD_IP_ADDR,ATTR_STARTD_IP_ADDR,startd_ad);
 		MyString slotX_last_match_time;
-		slotX_last_match_time.sprintf("slot%d_%s",slot_id,ATTR_MACHINE_LAST_MATCH_TIME);
+		slotX_last_match_time.formatstr("slot%d_%s",slot_id,ATTR_MACHINE_LAST_MATCH_TIME);
 		slot1_update_ad.Assign(slotX_last_match_time.Value(),(int)now);
 
 		classy_counted_ptr<ClassAdMsg> lmsg = \
@@ -5190,7 +5379,7 @@ static void
 DelAttrN( ClassAd *ad, char const *attr, int n )
 {
 	MyString attrn;
-	attrn.sprintf("%s%d",attr,n);
+	attrn.formatstr("%s%d",attr,n);
 	ad->Delete( attrn.Value() );
 }
 
@@ -5198,7 +5387,7 @@ static void
 SetAttrN( ClassAd *ad, char const *attr, int n, int value )
 {
 	MyString attrn;
-	attrn.sprintf("%s%d",attr,n);
+	attrn.formatstr("%s%d",attr,n);
 	ad->Assign(attrn.Value(),value);
 }
 
@@ -5206,7 +5395,7 @@ static void
 SetAttrN( ClassAd *ad, char const *attr, int n, double value )
 {
 	MyString attrn;
-	attrn.sprintf("%s%d",attr,n);
+	attrn.formatstr("%s%d",attr,n);
 	ad->Assign(attrn.Value(),value);
 }
 
@@ -5214,7 +5403,7 @@ static void
 SetAttrN( ClassAd *ad, char const *attr, int n, std::set<std::string> &string_list )
 {
 	MyString attrn;
-	attrn.sprintf("%s%d",attr,n);
+	attrn.formatstr("%s%d",attr,n);
 
 	MyString value;
 	std::set<std::string>::iterator it;

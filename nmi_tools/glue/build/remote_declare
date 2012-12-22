@@ -44,18 +44,12 @@ print "Generating tasklist...\n";
 
 open(TASKLIST, '>', $tasklist_file) or die "Can't open $tasklist_file for writing: $!\n";
 
-if ($ENV{NMI_PLATFORM} =~ /winnt/) {
+if ($ENV{NMI_PLATFORM} =~ /_win/i) {
     #Windows
-    if ($ENV{COMPUTERNAME} =~ /^EXEC\-/) {
-        # new BATLAB
-        print TASKLIST "$EXTERNALS_TASK\n";
-        print TASKLIST "$TAR_TASK\n";
-        print TASKLIST "$CHECK_TAR_TASK\n";
-        print TASKLIST "$NATIVE_TASK\n";
-    } else {
-        # old BATLAB
-        print TASKLIST "$TAR_TASK\n";
-    }
+    print TASKLIST "$EXTERNALS_TASK\n";
+    print TASKLIST "$UNSTRIPPED_TASK\n";
+    print TASKLIST "$NATIVE_TASK\n";
+    print TASKLIST "$TAR_TASK\n";
 }    
 else {
     # Everything else

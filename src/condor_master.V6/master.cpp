@@ -257,7 +257,7 @@ main_init( int argc, char* argv[] )
         // relative time. This means that we don't have to update
         // the time each time we restart the daemon.
 		MyString runfor_env;
-		runfor_env.sprintf("%s=%ld", EnvGetName(ENV_DAEMON_DEATHTIME),
+		runfor_env.formatstr("%s=%ld", EnvGetName(ENV_DAEMON_DEATHTIME),
 						   time(NULL) + (runfor * 60));
 		SetEnv(runfor_env.Value());
     }
@@ -356,7 +356,7 @@ main_init( int argc, char* argv[] )
 	_EXCEPT_Cleanup = DoCleanup;
 
 #if !defined(WIN32)
-	if( !Termlog && param_boolean( "USE_PROCESS_GROUPS", true ) ) {
+	if( !dprintf_to_term_check() && param_boolean( "USE_PROCESS_GROUPS", true ) ) {
 			// If we're not connected to a terminal, start our own
 			// process group, unless the config file says not to.
 		setsid();
@@ -932,8 +932,7 @@ main_config()
 	StringList old_daemon_list;
 	char *list = daemons.ordered_daemon_names.print_to_string();
 	char *daemon_name;
-	class daemon	*new_daemon;
-	int new_daemons = 0;
+	class daemon	*adaemon;
 
 	if( list ) {
 		old_daemon_list.initializeFromString(list);
@@ -949,26 +948,7 @@ main_config()
 		// Reset the daemon list
 	init_daemon_list();
 
-		// Setup Controllers for new daemons
-	daemons.ordered_daemon_names.rewind();
-	while( ( daemon_name = daemons.ordered_daemon_names.next() ) ) {
-		if( !old_daemon_list.contains(daemon_name) ) {
-			new_daemon = daemons.FindDaemon(daemon_name);
-			if ( new_daemon == NULL ) {
-				dprintf( D_ALWAYS, "Setup for daemon failed\n");
-			}
-			else if ( new_daemon->SetupController() < 0 ) {
-				dprintf( D_ALWAYS,
-						"Setup for daemon %s failed\n",
-						new_daemon->daemon_name );
-			}
-			else {
-				++new_daemons;
-			}
-		}
-	}
-
-	// Remove daemons that should no longer be running
+		// Remove daemons that should no longer be running
 	old_daemon_list.rewind();
 	while( (daemon_name = old_daemon_list.next()) ) {
 		if( !daemons.ordered_daemon_names.contains(daemon_name) ) {
@@ -992,11 +972,27 @@ main_config()
 			// Tell all the daemons that are running to reconfig.
 		daemons.ReconfigAllDaemons();
 
-		if( new_daemons > 0 ) {
-				// Start new daemons
-			daemons.StartAllDaemons();
+			// Setup and configure controllers for all daemons in
+			// case the reconfig changed controller setup.  Start
+			// any new daemons as well
+		daemons.ordered_daemon_names.rewind();
+		while( ( daemon_name = daemons.ordered_daemon_names.next() ) ) {
+			adaemon = daemons.FindDaemon(daemon_name);
+			if ( adaemon == NULL ) {
+				dprintf( D_ALWAYS, "ERROR: Setup for daemon %s failed\n", daemon_name );
+			}
+			else if ( adaemon->SetupController() < 0 ) {
+				dprintf( D_ALWAYS,
+						"ERROR: Setup of controller for daemon %s failed\n",
+						daemon_name );
+				daemons.StopDaemon( daemon_name );
+			}
+			else if( !old_daemon_list.contains(daemon_name) ) {
+				daemons.StartDaemonHere(adaemon);
+			}
+
 		}
-	
+
 	} else {
 		daemons.DaemonsOff();
 	}
@@ -1088,7 +1084,7 @@ invalidate_ads() {
 	}
 	
 	ClassAd::EscapeStringValue( default_name, escaped_name );
-	line.sprintf( "( TARGET.%s == \"%s\" )", ATTR_NAME, escaped_name.Value() );
+	line.formatstr( "( TARGET.%s == \"%s\" )", ATTR_NAME, escaped_name.Value() );
 	cmd_ad.AssignExpr( ATTR_REQUIREMENTS, line.Value() );
 	cmd_ad.Assign( ATTR_NAME, default_name );
 	cmd_ad.Assign( ATTR_MY_ADDRESS, daemonCore->publicNetworkIpAddr());
@@ -1249,11 +1245,6 @@ main( int argc, char **argv )
     bool has_console = main_has_console();
     bool is_daemon = dc_args_is_background(argc, argv);
 #endif
-
-		// If we don't clear this, then we'll use the same CCB broker
-		// as our parent or previous incarnation. If there's a list of
-		// brokers, we want to choose from the whole list.
-	UnsetEnv( "NET_REMAP_ENABLE" );
 
 	set_mySubSystem( "MASTER", SUBSYSTEM_TYPE_MASTER );
 

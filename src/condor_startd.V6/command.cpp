@@ -620,50 +620,6 @@ command_match_info( Service*, int cmd, Stream* stream )
 
 
 int
-command_give_request_ad( Service*, int, Stream* stream) 
-{
-	int pid = -1;  // Starter sends it's pid so we know what
-				   // resource's request ad to send 
-	Claim*		claim;
-	ClassAd*	cp;
-
-	if( ! stream->code(pid) ) {
-		dprintf( D_ALWAYS, "give_request_ad: Can't read pid\n" );
-		stream->encode();
-		stream->end_of_message();
-		return FALSE;
-	}
-	if( ! stream->end_of_message() ) {
-		dprintf( D_ALWAYS, "give_request_ad: Can't read eom\n" );
-		stream->encode();
-		stream->end_of_message();
-		return FALSE;
-	}
-	claim = resmgr->getClaimByPid( pid );
-	if( !claim ) {
-		dprintf( D_ALWAYS, 
-				 "give_request_ad: Can't find starter with pid %d\n",
-				 pid ); 
-		stream->encode();
-		stream->end_of_message();
-		return FALSE;
-	}
-	cp = claim->ad();
-	if( !cp ) {
-		claim->dprintf( D_ALWAYS, 
-						"give_request_ad: current claim has NULL classad.\n" );
-		stream->encode();
-		stream->end_of_message();
-		return FALSE;
-	}
-	stream->encode();
-	cp->put( *stream );
-	stream->end_of_message();
-	return TRUE;
-}
-
-
-int
 command_query_ads( Service*, int, Stream* stream) 
 {
 	ClassAd queryAd;
@@ -1876,6 +1832,10 @@ match_info( Resource* rip, char* id )
 			rval = FALSE;
 		}
 		break;
+	case drained_state:
+		dprintf( D_ALWAYS, "Got match while in Drained state; ignoring.\n" );
+		return TRUE;
+		break;
 	default:
 		EXCEPT( "match_info() called with unexpected state (%s)", 
 				state_to_string(rip->state()) );
@@ -2061,7 +2021,7 @@ caLocateStarter( Stream *s, char* cmd_str, ClassAd* req_ad )
 		 strcasecmp( startd_sends_alives.c_str(), "false" ) )
 	{
 		MyString err_msg;
-		err_msg.sprintf("Required %s, not found in request",
+		err_msg.formatstr("Required %s, not found in request",
 						ATTR_SCHEDD_IP_ADDR);
 		sendErrorReply( s, cmd_str, CA_FAILURE, err_msg.Value() );
 		rval = FALSE;

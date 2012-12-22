@@ -138,6 +138,8 @@ daemon::daemon(const char *name, bool is_daemon_core, bool is_h )
 	m_reload_shared_port_addr_after_startup = false;
 	m_never_use_shared_port = false;
 	m_only_stop_when_master_stops = false;
+	flag_in_config_file = NULL;
+	controller_name = NULL;
 
 	// Handle configuration
 	DoConfig( true );
@@ -209,12 +211,6 @@ daemon::~daemon()
 	if( controller_name != NULL ) {
 		free( controller_name );
 	}
-	if( controller != NULL ) {
-		delete( controller );
-	}
-	for( int num = 0;  num < num_controllees;  num++ ) {
-		delete( controllees[num] );
-	}
 }
 
 int
@@ -266,7 +262,7 @@ daemon::runs_on_this_host()
 	// X_RUNS_HERE controls whether or not to run kbdd if it's presented in
 	// the config file
 	{
-		runs_here = param_boolean_crufty("X_RUNS_HERE", false) ? TRUE : FALSE;
+		runs_here = param_boolean_crufty("X_RUNS_HERE", true) ? TRUE : FALSE;
 	}
 	return runs_here;
 }
@@ -358,11 +354,6 @@ daemon::DoConfig( bool init )
 	char	*tmp;
 	char	buf[1000];
 
-	// Initialize some variables the first time through
-	if ( init ) {
-		flag_in_config_file = NULL;
-	}
-
 	// Check for the _FLAG parameter
 	sprintf(buf, "%s_FLAG", name_in_config_file );
 	tmp = param(buf);
@@ -408,17 +399,22 @@ daemon::DoConfig( bool init )
 	this->env.Clear();
 	this->env.MergeFrom(env_parser);
 
+	if( NULL != controller_name ) {
+		DetachController();
+		free( controller_name );
+	}
+	sprintf(buf, "MASTER_%s_CONTROLLER", name_in_config_file );
+	controller_name = param( buf );
+	controller = NULL;		// Setup later in Daemons::CheckDaemonConfig()
+	if ( controller_name ) {
+		dprintf( D_FULLDEBUG, "Daemon %s is controlled by %s\n",
+				 name_in_config_file, controller_name );
+	}
+
 	// Check for the _INITIAL_STATE parameter (only at init time)
 	// Default to on_hold = false, set to true of state eq "off"
 	if ( init ) {
-		sprintf(buf, "MASTER_%s_CONTROLLER", name_in_config_file );
-		controller_name = param( buf );
-		controller = NULL;		// Setup later in Daemons::CheckDaemonConfig()
 		on_hold = true;
-		if ( controller_name ) {
-			dprintf( D_FULLDEBUG, "Daemon %s is controlled by %s\n",
-					 name_in_config_file, controller_name );
-		}
 	}
 
 	// XXX These defaults look to be very wrong, compare with 
@@ -1071,7 +1067,7 @@ void
 daemon::Exited( int status )
 {
 	MyString msg;
-	msg.sprintf( "The %s (pid %d) ", name_in_config_file, pid );
+	msg.formatstr( "The %s (pid %d) ", name_in_config_file, pid );
 	bool had_failure = true;
 	if (daemonCore->Was_Not_Responding(pid)) {
 		msg += "was killed because it was no longer responding";
@@ -1185,16 +1181,16 @@ daemon::Obituary( int status )
     char buf[1000];
 
 	MyString email_subject;
-	email_subject.sprintf("Problem %s: %s ", get_local_fqdn().Value(), 
+	email_subject.formatstr("Problem %s: %s ", get_local_fqdn().Value(), 
 						  condor_basename(process_name));
 	if ( was_not_responding ) {
 		email_subject += "killed (unresponsive)";
 	} else {
 		MyString fmt;
 		if( WIFSIGNALED(status) ) {
-			fmt.sprintf("died (%d)", WTERMSIG(status));
+			fmt.formatstr("died (%d)", WTERMSIG(status));
 		} else {
-			fmt.sprintf("exited (%d)", WEXITSTATUS(status));
+			fmt.formatstr("exited (%d)", WEXITSTATUS(status));
 		}
 		email_subject += fmt;
 	}
@@ -1339,7 +1335,9 @@ daemon::Reconfig()
 		return;
 	}
 	DoConfig( false );
-	Kill( SIGHUP );
+	if( pid ) {
+		Kill( SIGHUP );
+	}
 }
 
 
@@ -1416,7 +1414,7 @@ daemon::SetupHighAvailability( void )
 	MyString	name;
 
 	// Get the URL
-	name.sprintf("HA_%s_LOCK_URL", name_in_config_file );
+	name.formatstr("HA_%s_LOCK_URL", name_in_config_file );
 	tmp = param( name.Value() );
 	if ( ! tmp ) {
 		tmp = param( "HA_LOCK_URL" );
@@ -1431,7 +1429,7 @@ daemon::SetupHighAvailability( void )
 
 	// Get the length of the lock
 	time_t		lock_hold_time = 60 * 60;	// One hour
-	name.sprintf( "HA_%s_LOCK_HOLD_TIME", name_in_config_file );
+	name.formatstr( "HA_%s_LOCK_HOLD_TIME", name_in_config_file );
 	tmp = param( name.Value( ) );
 	if ( ! tmp ) {
 		tmp = param( "HA_LOCK_HOLD_TIME" );
@@ -1449,7 +1447,7 @@ daemon::SetupHighAvailability( void )
 
 	// Get the lock poll time
 	time_t		poll_period = 5 * 60;		// Five minutes
-	name.sprintf( "HA_%s_POLL_PERIOD", name_in_config_file );
+	name.formatstr( "HA_%s_POLL_PERIOD", name_in_config_file );
 	tmp = param( name.Value() );
 	if ( ! tmp ) {
 		tmp = param( "HA_POLL_PERIOD" );
@@ -1568,14 +1566,67 @@ daemon::SetupController( void )
 	return 0;
 }
 
+
+int
+daemon::DetachController( void )
+{
+	if ( !controller_name ) {
+		return 0;
+	}
+
+	// Find the matching daemon by name
+	controller = daemons.FindDaemon( controller_name );
+	if ( ! controller ) {
+		dprintf( D_ALWAYS,
+				 "%s: Can't find my controller daemon '%s'\n",
+				 name_in_config_file, controller_name );
+		return -1;
+	}
+	controller->DeregisterControllee( this );
+
+	// Done
+	return 0;
+}
+
 int
 daemon::RegisterControllee( class daemon *controllee )
 {
+	bool found = false;
+
 	if ( num_controllees >= MAX_CONTROLLEES ) {
 		return -1;
 	}
-	controllees[num_controllees++] = controllee;
+	for ( int num = 0; num < num_controllees; ++num ) {
+		if( strncmp(controllee->name_in_config_file, controllees[num]->name_in_config_file, strlen(controllees[num]->name_in_config_file)) == 0 ) {
+			found = true;
+			break;
+		}
+	}
+	if ( !found ) {
+		controllees[num_controllees++] = controllee;
+	}
 	return 0;
+}
+
+
+void
+daemon::DeregisterControllee( class daemon *controllee )
+{
+	bool found = false;
+
+	for ( int num = 0; num < num_controllees; ++num ) {
+		if( strcmp(controllee->name_in_config_file, controllees[num]->name_in_config_file) == 0 ) {
+			controllees[num] = NULL;
+			found = true;
+		}
+		else if ( found ) {
+			controllees[num-1] = controllees[num];	
+			controllees[num] = NULL;
+		}
+	}
+	if ( found ) {
+		num_controllees--;
+	}
 }
 
 
@@ -1609,6 +1660,7 @@ Daemons::RegisterDaemon(class daemon *d)
 		EXCEPT( "Registering daemon %s failed", d->name_in_config_file );
 	}
 }
+
 
 int
 Daemons::SetupControllers( void )
@@ -1832,15 +1884,24 @@ Daemons::StartAllDaemons()
 				// the daemon is already started
 			continue;
 		} 
-		if( ! daemon->runs_here ) continue;
-		daemon->Hold( FALSE );
-		daemon->Start();
+
+		if( StartDaemonHere(daemon) == FALSE ) continue;
 
 		if( daemon->WaitBeforeStartingOtherDaemons(true) ) {
 			ScheduleRetryStartAllDaemons();
 			return;
 		}
 	}
+}
+
+
+int
+Daemons::StartDaemonHere(class daemon *daemon)
+{
+	if( ! daemon->runs_here ) return FALSE;
+	daemon->Hold( FALSE );
+	daemon->Start();
+	return TRUE;
 }
 
 
@@ -1906,6 +1967,7 @@ Daemons::StopDaemon( char* name )
 		}
 		else {
 			iter->second->CancelAllTimers();
+			iter->second->DetachController();
 			delete iter->second;
 		}
 		daemon_ptr.erase( iter );
@@ -2074,10 +2136,10 @@ void
 Daemons::ReconfigAllDaemons()
 {
 	std::map<std::string, class daemon*>::iterator iter;
-	dprintf( D_ALWAYS, "Reconfiguring all running daemons.\n" );
+	dprintf( D_ALWAYS, "Reconfiguring all managed daemons.\n" );
 
 	for( iter = daemon_ptr.begin(); iter != daemon_ptr.end(); iter++ ) {
-		if( iter->second->pid && iter->second->runs_here ) {
+		if( iter->second->runs_here ) {
 			iter->second->Reconfig();
 		}
 	}
@@ -2217,7 +2279,7 @@ Daemons::ExecMaster()
 				runfor = 1; // minimum 1
 			}
 			MyString runfor_str;
-			runfor_str.sprintf("%d",runfor);
+			runfor_str.formatstr("%d",runfor);
 			argv[i++] = strdup(runfor_str.Value());
 		}
 	}
@@ -2257,7 +2319,7 @@ Daemons::FinalRestartMaster()
 			::GetSystemDirectory(systemshell,MAX_PATH);
 			strcat(systemshell,"\\cmd.exe");
 			MyString command;
-			command.sprintf("net stop %s & net start %s", 
+			command.formatstr("net stop %s & net start %s", 
 				_condor_myServiceName, _condor_myServiceName);
 			dprintf( D_ALWAYS, "Doing exec( \"%s /Q /C %s\" )\n", 
 				 systemshell,command.Value());

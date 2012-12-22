@@ -384,17 +384,20 @@ int CollectorDaemon::receive_query_cedar(Service* /*s*/,
 	ClassAd *curr_ad = NULL;
 	int more = 1;
 	
+
 		// See if query ad asks for server-side projection
 	string projection = "";
-	cad.LookupString(ATTR_PROJECTION, projection);
-	SimpleList<MyString> projectionList;
-
-	::split_args(projection.c_str(), &projectionList);
 
 	while ( (curr_ad=results.Next()) )
     {
 		StringList expanded_projection;
 		StringList *attr_whitelist=NULL;
+
+		projection = "";
+		cad.EvalString(ATTR_PROJECTION, curr_ad, projection);
+		SimpleList<MyString> projectionList;
+
+		::split_args(projection.c_str(), &projectionList);
 
 		if (projectionList.Number() > 0) {
 			computeProjection(curr_ad, &projectionList, expanded_projection);
@@ -988,7 +991,7 @@ void CollectorDaemon::process_query_public (AdTypes whichAds,
 		checks_absent = machine_refs.contains_anycase( ATTR_ABSENT );
 		if (!checks_absent) {
 			MyString modified_filter;
-			modified_filter.sprintf("(%s) && (%s =!= True)",
+			modified_filter.formatstr("(%s) && (%s =!= True)",
 				ExprTreeToString(__filter__),ATTR_ABSENT);
 			query->AssignExpr(ATTR_REQUIREMENTS,modified_filter.Value());
 			__filter__ = query->LookupExpr(ATTR_REQUIREMENTS);
@@ -1114,7 +1117,7 @@ int CollectorDaemon::reportMiniStartdScanFunc( ClassAd *cad )
     char buf[80];
 	int iRet = 0;
 
-	if ( cad && cad->LookupString( ATTR_STATE, buf ) )
+	if ( cad && cad->LookupString( ATTR_STATE, buf, sizeof(buf) ) )
 	{
 		machinesTotal++;
 		switch ( buf[0] )
@@ -1521,12 +1524,12 @@ void CollectorDaemon::init_classad(int interval)
     MyString id;
     if( CollectorName ) {
             if( strchr( CollectorName, '@' ) ) {
-               id.sprintf( "%s", CollectorName );
+               id.formatstr( "%s", CollectorName );
             } else {
-               id.sprintf( "%s@%s", CollectorName, get_local_fqdn().Value() );
+               id.formatstr( "%s@%s", CollectorName, get_local_fqdn().Value() );
             }
     } else {
-            id.sprintf( "%s", get_local_fqdn().Value() );
+            id.formatstr( "%s", get_local_fqdn().Value() );
     }
     ad->Assign( ATTR_NAME, id.Value() );
 

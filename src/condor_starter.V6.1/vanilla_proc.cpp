@@ -124,7 +124,7 @@ VanillaProc::StartJob()
 			if ( MATCH == strcasecmp ( 
 					CONDOR_EXEC, 
 					condor_basename ( jobname.Value () ) ) ) {
-				filename.sprintf ( "condor_exec%s", extension );
+				filename.formatstr ( "condor_exec%s", extension );
 				if (rename(CONDOR_EXEC, filename.Value()) != 0) {
 					dprintf (D_ALWAYS, "VanillaProc::StartJob(): ERROR: "
 							"failed to rename executable from %s to %s\n", 
@@ -187,17 +187,17 @@ VanillaProc::StartJob()
 	//
 	fi.max_snapshot_interval = param_integer("PID_SNAPSHOT_INTERVAL", 15);
 
-	char const *dedicated_account = Starter->jic->getExecuteAccountIsDedicated();
+	m_dedicated_account = Starter->jic->getExecuteAccountIsDedicated();
 	if( ThisProcRunsAlongsideMainProc() ) {
 			// If we track a secondary proc's family tree (such as
 			// sshd) using the same dedicated account as the job's
 			// family tree, we could end up killing the job when we
 			// clean up the secondary family.
-		dedicated_account = NULL;
+		m_dedicated_account = NULL;
 	}
-	if (dedicated_account) {
+	if (m_dedicated_account) {
 			// using login-based family tracking
-		fi.login = dedicated_account;
+		fi.login = m_dedicated_account;
 			// The following message is documented in the manual as the
 			// way to tell whether the dedicated execution account
 			// configuration is being used.
@@ -236,17 +236,33 @@ VanillaProc::StartJob()
 	param(cgroup_base, "BASE_CGROUP", "");
 	MyString cgroup_str;
 	const char *cgroup = NULL;
-	if (cgroup_base.length()) {
+		/* Note on CONDOR_UNIVERSE_LOCAL - The cgroup setup code below
+		 *  requires a unique name for the cgroup. It relies on
+		 *  uniqueness of the MachineAd's Name
+		 *  attribute. Unfortunately, in the local universe the
+		 *  MachineAd (mach_ad elsewhere) is never populated, because
+		 *  there is no machine. As a result the ASSERT on
+		 *  starter_name fails. This means that the local universe
+		 *  will not work on any machine that has BASE_CGROUP
+		 *  configured. A potential workaround is to set
+		 *  STARTER.BASE_CGROUP on any machine that is also running a
+		 *  schedd, but that disables cgroup support from a
+		 *  co-resident startd. Instead, I'm disabling cgroup support
+		 *  from within the local universe until the intraction of
+		 *  local universe and cgroups can be properly worked
+		 *  out. -matt 7 nov '12
+		 */
+	if (CONDOR_UNIVERSE_LOCAL != job_universe && cgroup_base.length()) {
 		MyString cgroup_uniq;
 		std::string starter_name, execute_str;
 		param(execute_str, "EXECUTE", "EXECUTE_UNKNOWN");
 			// Note: Starter is a global variable from os_proc.cpp
 		Starter->jic->machClassAd()->EvalString(ATTR_NAME, NULL, starter_name);
 		ASSERT (starter_name.size());
-		cgroup_uniq.sprintf("%s_%s", execute_str.c_str(), starter_name.c_str());
+		cgroup_uniq.formatstr("%s_%s", execute_str.c_str(), starter_name.c_str());
 		const char dir_delim[2] = {DIR_DELIM_CHAR, '\0'};
 		cgroup_uniq.replaceString(dir_delim, "_");
-		cgroup_str.sprintf("%s%ccondor%s", cgroup_base.c_str(), DIR_DELIM_CHAR,
+		cgroup_str.formatstr("%s%ccondor%s", cgroup_base.c_str(), DIR_DELIM_CHAR,
 			cgroup_uniq.Value());
 		cgroup = cgroup_str.Value();
 		ASSERT (cgroup != NULL);
@@ -408,7 +424,8 @@ VanillaProc::StartJob()
 #if defined(HAVE_EXT_LIBCGROUP)
 
 	// Set fairshare limits.  Note that retval == 1 indicates success, 0 is failure.
-	if (cgroup && retval) {
+	// See Note near setup of param(BASE_CGROUP)
+	if (CONDOR_UNIVERSE_LOCAL != job_universe && cgroup && retval) {
 		std::string mem_limit;
 		param(mem_limit, "MEMORY_LIMIT", "soft");
 		bool mem_is_soft = mem_limit == "soft";
@@ -433,11 +450,11 @@ VanillaProc::StartJob()
 
 		// Now, set the CPU shares
 		ClassAd * MachineAd = Starter->jic->machClassAd();
-		int slotWeight;
-		if (MachineAd->LookupInteger(ATTR_SLOT_WEIGHT, slotWeight)) {
-			climits.set_cpu_shares(slotWeight*100);
+		int numCores = 1;
+		if (MachineAd->LookupInteger(ATTR_CPUS, numCores)) {
+			climits.set_cpu_shares(numCores*100);
 		} else {
-			dprintf(D_FULLDEBUG, "Invalid value of SlotWeight in machine ClassAd; ignoring.\n");
+			dprintf(D_FULLDEBUG, "Invalid value of Cpus in machine ClassAd; ignoring.\n");
 		}
 		setupOOMEvent(cgroup);
 	}
@@ -520,8 +537,25 @@ VanillaProc::JobReaper(int pid, int status)
 	dprintf(D_FULLDEBUG,"Inside VanillaProc::JobReaper()\n");
 
 	if (pid == JobPid) {
-			// Make sure that nothing was left behind.
-		daemonCore->Kill_Family(JobPid);
+
+			// To make sure that no job processes are still lingering
+			// on the machine, call Kill_Family().
+			//
+			// HOWEVER, iff we are tracking process families via a
+			// dedicated execute account, we want to delay killing until
+			// there is only one job under the starter.  We do this to
+			// prevent the starter from killing the SSH daemon early, and
+			// therefore effectively killing any ssh_to_job session as soon
+			// as the job exits on machine configured with a dedicated
+			// execute account.
+		if ( !m_dedicated_account || Starter->numberOfJobs() == 1 )
+		{
+			dprintf(D_PROCFAMILY,"About to call Kill_Family()\n");
+			daemonCore->Kill_Family(JobPid);
+		} else {
+			dprintf(D_PROCFAMILY,
+				"Postponing call to Kill_Family() (perhaps due to ssh_to_job)\n");
+		}
 
 			// Record final usage stats for this process family, since
 			// once the reaper returns, the family is no longer

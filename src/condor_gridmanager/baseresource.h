@@ -68,6 +68,15 @@ class BaseResource : public Service
 	// TODO Make this private and provide an accessor function?
 	time_t m_sharedLeaseExpiration;
 
+	int m_paramJobPollRate;
+	int m_paramJobPollInterval;
+	int m_jobPollInterval;
+
+	virtual void SetJobPollInterval();
+	int GetJobPollInterval() { return m_jobPollInterval; };
+
+    bool didFirstPing() { return firstPingDone; }
+
  protected:
 	void DeleteMe();
 

@@ -46,13 +46,22 @@
 #include "string_list.h"
 #include "condor_version.h"
 #include "subsystem_info.h"
-#include "condor_xml_classads.h"
 #include "condor_open.h"
 #include "condor_sockaddr.h"
+#include "condor_id.h"
+#include "userlog_to_classads.h"
 #include "ipv6_hostname.h"
 #include <map>
 #include <vector>
 #include "../classad_analysis/analysis.h"
+
+/*
+#ifndef WIN32
+#include <sys/types.h>
+#include <unistd.h>
+#include <pwd.h>
+#endif
+*/
 
 #ifdef HAVE_EXT_POSTGRESQL
 #include "sqlquery.h"
@@ -77,6 +86,8 @@ enum {
 	/* talk directly to the schedd */
 	DIRECT_SCHEDD = 4
 };
+
+struct 	PrioEntry { MyString name; float prio; };
 
 #ifdef WIN32
 static int getConsoleWindowSize(int * pHeight = NULL) {
@@ -127,7 +138,8 @@ static void init_output_mask();
 /* a type used to point to one of the above two functions */
 typedef bool (*show_queue_fp)(const char* v1, const char* v2, const char* v3, const char* v4, bool useDB);
 
-static bool read_classad_file(const char *filename, ClassAdList &classads);
+static bool read_classad_file(const char *filename, ClassAdList &classads, ClassAdFileParseHelper* pparse_help, const char * constr);
+static int read_userprio_file(const char *filename, ExtArray<PrioEntry> & prios);
 
 /* convert the -direct aqrgument prameter into an enum */
 unsigned int process_direct_argument(char *arg);
@@ -156,16 +168,24 @@ static  bool directDBquery = false;
 	failover semantics */
 static unsigned int direct = DIRECT_ALL;
 
-static 	int verbose = 0, summarize = 1, global = 0, show_io = 0, dag = 0, show_held = 0;
+static 	int dash_long = 0, summarize = 1, global = 0, show_io = 0, dag = 0, show_held = 0;
 static  int use_xml = 0;
 static  bool widescreen = false;
 static  bool unbuffered = false;
 static  bool expert = false;
+static  bool verbose = false; // note: this is !!NOT the same as -long !!!
 
 static 	int malformed, running, idle, held, suspended, completed, removed;
 
 static  char *jobads_file = NULL;
 static  char *machineads_file = NULL;
+static  char *userprios_file = NULL;
+
+static  char *userlog_file = NULL;
+
+// Constraint on JobIDs for faster filtering
+// a list and not set since we expect a very shallow depth
+static std::vector<CondorID> constrID;
 
 static	CondorQ 	Q;
 static	QueryResult result;
@@ -272,7 +292,9 @@ static  const char		*JOB_TIME = "RUN_TIME";
 static	bool		querySchedds 	= false;
 static	bool		querySubmittors = false;
 static	char		constraint[4096];
-static  const char *user_constraint; // just the constraint given by the user
+static  const char *user_job_constraint = NULL; // just the constraint given by the user
+static  const char *user_slot_constraint = NULL; // just the machine constraint given by the user
+static  bool        single_machine = false;
 static	DCCollector* pool = NULL; 
 static	char		*scheddAddr;	// used by format_remote_host()
 static	AttrListPrintMask 	mask;
@@ -281,13 +303,16 @@ static  List<const char> mask_head; // The list of headings for the mask entries
 static CollectorList * Collectors = NULL;
 
 // for run failure analysis
-static  int			findSubmittor( char * );
+static  int			findSubmittor( const char * );
 static	void 		setupAnalysis();
-static 	void		fetchSubmittorPrios();
-static	void		doRunAnalysis( ClassAd*, Daemon* );
-static	const char *doRunAnalysisToBuffer( ClassAd*, Daemon* );
-struct 	PrioEntry { MyString name; float prio; };
-static  bool        better_analyze = false;
+static 	int			fetchSubmittorPriosFromNegotiator(ExtArray<PrioEntry> & prios);
+static	void		doJobRunAnalysis( ClassAd*, Daemon* );
+static	const char *doJobRunAnalysisToBuffer( ClassAd*, Daemon* );
+static	void		doSlotRunAnalysis( ClassAd*, ClassAdList & jobs, Daemon*, int console_width);
+static	const char *doSlotRunAnalysisToBuffer( ClassAd*, ClassAdList & jobs, Daemon*, int console_width);
+static	bool		better_analyze = false;
+static	bool		reverse_analyze = false;
+static	int			analyze_detail_level = 0;
 static	bool		run = false;
 static	bool		goodput = false;
 static	char		*fixSubmittorName( char*, int );
@@ -342,6 +367,80 @@ static void freeConnectionStrings() {
 	}
 }
 
+class CondorQClassAdFileParseHelper : public compat_classad::ClassAdFileParseHelper
+{
+ public:
+	virtual int PreParse(std::string & line, ClassAd & ad, FILE* file);
+	virtual int OnParseError(std::string & line, ClassAd & ad, FILE* file);
+	std::string schedd_name;
+	std::string schedd_addr;
+};
+
+// this method is called before each line is parsed. 
+// return 0 to skip (is_comment), 1 to parse line, 2 for end-of-classad, -1 for abort
+int CondorQClassAdFileParseHelper::PreParse(std::string & line, ClassAd & /*ad*/, FILE* /*file*/)
+{
+	// treat blank lines as delimiters.
+	if (line.size() <= 0) {
+		return 2; // end of classad.
+	}
+
+	// standard delimitors are ... and ***
+	if (starts_with(line,"\n") || starts_with(line,"...") || starts_with(line,"***")) {
+		return 2; // end of classad.
+	}
+
+	// the normal output of condor_q -long is "-- schedd-name <addr>"
+	// we want to treat that as a delimiter, and also capture the schedd name and addr
+	if (starts_with(line, "-- ")) {
+		if (starts_with(line.substr(3), "Schedd:")) {
+			schedd_name = line.substr(3+8);
+			size_t ix1 = schedd_name.find_first_of(": \t\n");
+			if (ix1 != string::npos) {
+				size_t ix2 = schedd_name.find_first_not_of(": \t\n", ix1);
+				if (ix2 != string::npos) {
+					schedd_addr = schedd_name.substr(ix2);
+					ix2 = schedd_addr.find_first_of(" \t\n");
+					if (ix2 != string::npos) {
+						schedd_addr = schedd_addr.substr(0,ix2);
+					}
+				}
+				schedd_name = schedd_name.substr(0,ix1);
+			}
+		}
+		return 2;
+	}
+
+
+	// check for blank lines or lines whose first character is #
+	// tell the parser to skip those lines, otherwise tell the parser to
+	// parse the line.
+	for (size_t ix = 0; ix < line.size(); ++ix) {
+		if (line[ix] == '#' || line[ix] == '\n')
+			return 0; // skip this line, but don't stop parsing.
+		if (line[ix] != ' ' && line[ix] != '\t')
+			break;
+	}
+	return 1; // parse this line
+}
+
+// this method is called when the parser encounters an error
+// return 0 to skip and continue, 1 to re-parse line, 2 to quit parsing with success, -1 to abort parsing.
+int CondorQClassAdFileParseHelper::OnParseError(std::string & line, ClassAd & ad, FILE* file)
+{
+	// when we get a parse error, skip ahead to the start of the next classad.
+	int ee = this->PreParse(line, ad, file);
+	while (1 == ee) {
+		if ( ! readLine(line, file, false) || feof(file)) {
+			ee = 2;
+			break;
+		}
+		ee = this->PreParse(line, ad, file);
+	}
+	return ee;
+}
+
+
 #ifdef HAVE_EXT_POSTGRESQL
 /* this function for checking whether database can be used for querying in local machine */
 static bool checkDBconfig() {
@@ -379,8 +478,6 @@ static bool checkDBconfig() {
 }
 #endif /* HAVE_EXT_POSTGRESQL */
 
-extern 	"C"	int		Termlog;
-
 int main (int argc, char **argv)
 {
 	ClassAd		*ad;
@@ -417,7 +514,7 @@ int main (int argc, char **argv)
 	// Since we are assuming that we want to talk to a DB in the normal
 	// case, this will ensure that we don't try to when loading the job queue
 	// classads from file.
-	if (jobads_file != NULL) {
+	if ((jobads_file != NULL) || (userlog_file != NULL)) {
 		useDB = FALSE;
 	}
 
@@ -428,6 +525,11 @@ int main (int argc, char **argv)
 	// check if analysis is required
 	if( better_analyze ) {
 		setupAnalysis();
+		if ((jobads_file != NULL || userlog_file != NULL)) {
+			retval = show_queue(scheddAddr, scheddName, "Unknown", "Unknown", FALSE);
+ 			freeConnectionStrings();
+			exit(retval?EXIT_SUCCESS:EXIT_FAILURE);
+		}
 	}
 
 	// if we haven't figured out what to do yet, just display the
@@ -480,7 +582,7 @@ int main (int argc, char **argv)
            	// to the schedd time's out and the user gets nothing
            	// useful printed out. Therefore, we use show_queue,
            	// which fetches all of the ads, then analyzes them. 
-			if ( (unbuffered || verbose || better_analyze || jobads_file) && !g_stream_results ) {
+			if ( (unbuffered || dash_long || better_analyze || jobads_file || userlog_file) && !g_stream_results ) {
 				sqfp = show_queue;
 			} else {
 				sqfp = show_queue_buffered;
@@ -720,7 +822,7 @@ int main (int argc, char **argv)
 		useDB = FALSE;
 		if ( ! (ad->LookupString(ATTR_SCHEDD_IP_ADDR, &scheddAddr)  &&
 				 ad->LookupString(ATTR_NAME, &scheddName)		&& 
-				 ad->LookupString(ATTR_MACHINE, scheddMachine) &&
+				ad->LookupString(ATTR_MACHINE, scheddMachine, sizeof(scheddMachine)) &&
 				 ad->LookupString(ATTR_VERSION, scheddVersion) ) ) 
 		{
 			/* something is wrong with this schedd/quill ad, try the next one */
@@ -774,7 +876,7 @@ int main (int argc, char **argv)
         // to the schedd time's out and the user gets nothing
         // useful printed out. Therefore, we use show_queue,
         // which fetches all of the ads, then analyzes them. 
-		if ( (unbuffered || verbose || better_analyze) && !g_stream_results ) {
+		if ( (unbuffered || dash_long || better_analyze) && !g_stream_results ) {
 			sqfp = show_queue;
 		} else {
 			sqfp = show_queue_buffered;
@@ -945,10 +1047,9 @@ processCommandLineArguments (int argc, char *argv[])
 	int i, cluster, proc;
 	char *arg, *at, *daemonname;
 	const char * pcolon;
-	param_functions *p_funcs = NULL;
 
 	bool custom_attributes = false;
-	attrs.initializeFromString("ClusterId\nProcId\nQDate\nRemoteUserCPU\nJobStatus\nServerTime\nShadowBday\nRemoteWallClockTime\nJobPrio\nImageSize\nOwner\nCmd\nArgs");
+	attrs.initializeFromString("ClusterId\nProcId\nQDate\nRemoteUserCPU\nJobStatus\nServerTime\nShadowBday\nRemoteWallClockTime\nJobPrio\nImageSize\nOwner\nCmd\nArgs\nJobDescription");
 
 	for (i = 1; i < argc; i++)
 	{
@@ -957,16 +1058,17 @@ processCommandLineArguments (int argc, char *argv[])
 			if( sscanf( argv[i], "%d.%d", &cluster, &proc ) == 2 ) {
 				sprintf( constraint, "((%s == %d) && (%s == %d))",
 					ATTR_CLUSTER_ID, cluster, ATTR_PROC_ID, proc );
-                                Q.addOR( constraint );
-   
+				Q.addOR( constraint );
 				Q.addDBConstraint(CQ_CLUSTER_ID, cluster);
 				Q.addDBConstraint(CQ_PROC_ID, proc);
+				constrID.push_back(CondorID(cluster,proc,-1));
 				summarize = 0;
 			} 
 			else if( sscanf ( argv[i], "%d", &cluster ) == 1 ) {
 				sprintf( constraint, "(%s == %d)", ATTR_CLUSTER_ID, cluster );
 				Q.addOR( constraint );
-   				Q.addDBConstraint(CQ_CLUSTER_ID, cluster);
+				Q.addDBConstraint(CQ_CLUSTER_ID, cluster);
+				constrID.push_back(CondorID(cluster,-1,-1));
 				summarize = 0;
 			} 
 			else if( Q.add( CQ_OWNER, argv[i] ) != Q_OK ) {
@@ -981,31 +1083,31 @@ processCommandLineArguments (int argc, char *argv[])
 		// the '-' for prefix matches
 		arg = argv[i]+1;
 
-		if (match_prefix (arg, "wide")) {
+		if (is_arg_prefix (arg, "wide", 1)) {
 			widescreen = true;
 			continue;
 		}
-		//if (match_prefix (arg, "unbuf")) {
+		//if (is_arg_prefix (arg, "unbuf", 5)) {
 		//	unbuffered = true;
 		//	continue;
 		//}
-		if (match_prefix (arg, "long")) {
-			verbose = 1;
+		if (is_arg_prefix (arg, "long", 1)) {
+			dash_long = 1;
 			summarize = 0;
 		} 
 		else
-		if (match_prefix (arg, "xml")) {
+		if (is_arg_prefix (arg, "xml", 3)) {
 			use_xml = 1;
-			verbose = 1;
+			dash_long = 1;
 			summarize = 0;
 			customFormat = true;
 		}
 		else
-		if (match_prefix (arg, "pool")) {
+		if (is_arg_prefix (arg, "pool", 1)) {
 			if( pool ) {
 				delete pool;
 			}
-            if( ++i >= argc ) {
+			if( ++i >= argc ) {
 				fprintf( stderr,
 						 "Error: Argument -pool requires a hostname as an argument.\n" );
 				if (!expert) {
@@ -1037,10 +1139,10 @@ processCommandLineArguments (int argc, char *argv[])
 			Collectors->append ( new DCCollector( *pool ) );
 		} 
 		else
-		if (match_prefix (arg, "D")) {
+		if (is_arg_prefix (arg, "D", 1)) {
 			if( ++i >= argc ) {
 				fprintf( stderr, 
-						 "Error: Argument -D requires a list of flags as an argument.\n" );
+						 "Error: Argument -%s requires a list of flags as an argument.\n", arg );
 				if (!expert) {
 					printf("\n");
 					print_wrapped_text("Extra Info: You need to specify debug flags "
@@ -1050,11 +1152,10 @@ processCommandLineArguments (int argc, char *argv[])
 				}
 				exit( 1 );
 			}
-			Termlog = 1;
 			set_debug_flags( argv[i], 0 );
 		} 
 		else
-		if (match_prefix (arg, "name")) {
+		if (is_arg_prefix (arg, "name", 1)) {
 
 			if (querySubmittors) {
 				// cannot query both schedd's and submittors
@@ -1105,7 +1206,7 @@ processCommandLineArguments (int argc, char *argv[])
 			querySchedds = true;
 		} 
 		else
-		if (match_prefix (arg, "direct")) {
+		if (is_arg_prefix (arg, "direct", 1)) {
 			/* check for one more argument */
 			if (argc <= i+1) {
 				fprintf( stderr, 
@@ -1117,7 +1218,7 @@ processCommandLineArguments (int argc, char *argv[])
 			i++;
 		}
 		else
-		if (match_prefix (arg, "submitter")) {
+		if (is_arg_prefix (arg, "submitter", 1)) {
 
 			if (querySchedds) {
 				// cannot query both schedd's and submittors
@@ -1194,23 +1295,32 @@ processCommandLineArguments (int argc, char *argv[])
 			querySubmittors = true;
 		}
 		else
-		if (match_prefix (arg, "constraint")) {
+		if (is_arg_prefix (arg, "constraint", 1)) {
 			// make sure we have at least one more argument
 			if (argc <= i+1) {
 				fprintf( stderr, "Error: Argument -constraint requires "
 							"another parameter\n");
 				exit(1);
 			}
+			user_job_constraint = argv[++i];
+			summarize = 0;
 
-			if (Q.addAND (argv[++i]) != Q_OK) {
-				fprintf (stderr, "Error: Argument %d (%s)\n", i, argv[i]);
+			if (Q.addAND (user_job_constraint) != Q_OK) {
+				fprintf (stderr, "Error: Argument %d (%s)\n", i, user_job_constraint);
 				exit (1);
 			}
-			user_constraint = argv[i];
-			summarize = 0;
 		} 
 		else
-		if (match_prefix (arg, "address")) {
+		if (is_arg_prefix(arg, "machineconstraint", 8) || is_arg_prefix(arg, "mconstraint", 2)) {
+			// make sure we have at least one more argument
+			if (argc <= i+1) {
+				fprintf( stderr, "Error: Argument -%s requires another parameter\n", arg);
+				exit(1);
+			}
+			user_slot_constraint = argv[++i];
+		}
+		else
+		if (is_arg_prefix(arg, "address", 1)) {
 
 			if (querySubmittors) {
 				// cannot query both schedd's and submittors
@@ -1236,7 +1346,7 @@ processCommandLineArguments (int argc, char *argv[])
 			querySchedds = true;
 		} 
 		else
-		if( match_prefix( arg, "attributes" ) ) {
+		if (is_arg_prefix(arg, "attributes", 2)) {
 			if( argc <= i+1 ) {
 				fprintf( stderr, "Error: Argument -attributes requires "
 						 "a list of attributes to show\n" );
@@ -1255,7 +1365,7 @@ processCommandLineArguments (int argc, char *argv[])
 			i++;
 		}
 		else
-		if( match_prefix( arg, "format" ) ) {
+		if (is_arg_prefix(arg, "format", 1)) {
 				// make sure we have at least two more arguments
 			if( argc <= i+2 ) {
 				fprintf( stderr, "Error: Argument -format requires "
@@ -1275,8 +1385,8 @@ processCommandLineArguments (int argc, char *argv[])
 			i+=2;
 		}
 		else
-		if( is_arg_colon_prefix(arg, "autoformat", &pcolon, 5) || 
-			is_arg_colon_prefix(arg, "af", &pcolon, 2) ) {
+		if (is_arg_colon_prefix(arg, "autoformat", &pcolon, 5) || 
+			is_arg_colon_prefix(arg, "af", &pcolon, 2)) {
 				// make sure we have at least one more argument
 			if ( (i+1 >= argc)  || *(argv[i+1]) == '-') {
 				fprintf( stderr, "Error: Argument -autoformat requires "
@@ -1335,36 +1445,62 @@ processCommandLineArguments (int argc, char *argv[])
 					opts = FormatOptionAutoWidth | FormatOptionNoTruncate; 
 					mask_head.Append(hd);
 				}
-				else if (flabel) { lbl.sprintf("%s = ", argv[i]); wid = 0; opts = 0; }
+				else if (flabel) { lbl.formatstr("%s = ", argv[i]); wid = 0; opts = 0; }
 				lbl += fCapV ? "%V" : "%v";
 				mask.registerFormat(lbl.Value(), wid, opts, argv[i]);
 			}
 			mask.SetAutoSep(NULL, pcolpre, pcolsux, "\n");
 			customFormat = true;
 			usingPrintMask = true;
+			// if autoformat list ends in a '-' without any characters after it, just eat the arg and keep going.
+			if (i+1 < argc && '-' == (argv[i+1])[0] && 0 == (argv[i+1])[1]) {
+				++i;
+			}
 		}
 		else
-		if (match_prefix (arg, "global")) {
+		if (is_arg_prefix (arg, "global", 1)) {
 			global = 1;
 		} 
 		else
-		if (match_prefix (arg, "help")) {
+		if (is_dash_arg_prefix (argv[i], "help", 1)) {
 			usage(argv[0]);
 			exit(0);
 		}
-        else
-        if (match_prefix( arg, "better-analyze")
-			|| match_prefix( arg , "better-analyse")
-			|| match_prefix( arg , "analyze")
-			|| match_prefix( arg , "analyse")
-			) {
-            better_analyze = true;
-			attrs.clearAll();
-        }
 		else
-		if (match_prefix( arg, "run")) {
+		if (is_arg_colon_prefix(arg, "better-analyze", &pcolon, 2)
+			|| is_arg_colon_prefix(arg, "better-analyse", &pcolon, 2)
+			|| is_arg_colon_prefix(arg, "analyze", &pcolon, 2)
+			|| is_arg_colon_prefix(arg, "analyse", &pcolon, 2)
+			) {
+			better_analyze = true;
+			if (pcolon) { 
+				const char * pc;
+				if (is_arg_colon_prefix(pcolon+1, "reverse", &pc, 1)) {
+					reverse_analyze = true;
+					pcolon = pc;
+				}
+				PRAGMA_REMIND("TJ: analyze_detail_level should be enum rather than integer")
+				analyze_detail_level |= atoi(++pcolon); 
+			}
+			attrs.clearAll();
+		}
+		else
+		if (is_arg_colon_prefix(arg, "reverse", &pcolon, 3)) {
+			reverse_analyze = true;
+			if (pcolon) { 
+				analyze_detail_level |= atoi(++pcolon); 
+			}
+		}
+		else
+		if (is_arg_prefix(arg, "verbose", 4)) {
+			// chatty output, mostly for for -analyze
+			// this is not the same as -long. 
+			verbose = true;
+		}
+		else
+		if (is_arg_prefix(arg, "run", 1)) {
 			std::string expr;
-			sprintf( expr, "%s == %d || %s == %d || %s == %d", ATTR_JOB_STATUS, RUNNING,
+			formatstr( expr, "%s == %d || %s == %d || %s == %d", ATTR_JOB_STATUS, RUNNING,
 					 ATTR_JOB_STATUS, TRANSFERRING_OUTPUT, ATTR_JOB_STATUS, SUSPENDED );
 			Q.addAND( expr.c_str() );
 			run = true;
@@ -1373,7 +1509,7 @@ processCommandLineArguments (int argc, char *argv[])
 			attrs.append( ATTR_EC2_REMOTE_VM_NAME ); // for displaying HOST(s) in EC2
 		}
 		else
-		if (match_prefix( arg, "hold") || match_prefix( arg, "held")) {
+		if (is_arg_prefix(arg, "hold", 2) || is_arg_prefix( arg, "held", 2)) {
 			Q.add (CQ_STATUS, HELD);		
 			show_held = true;
 			widescreen = true;
@@ -1381,7 +1517,7 @@ processCommandLineArguments (int argc, char *argv[])
 			attrs.append( ATTR_HOLD_REASON );
 		}
 		else
-		if (match_prefix( arg, "goodput")) {
+		if (is_arg_prefix(arg, "goodput", 2)) {
 			// goodput and show_io require the same column
 			// real-estate, so they're mutually exclusive
 			goodput = true;
@@ -1392,17 +1528,17 @@ processCommandLineArguments (int argc, char *argv[])
 			attrs.append( ATTR_JOB_REMOTE_WALL_CLOCK );
 		}
 		else
-		if (match_prefix( arg, "cputime")) {
+		if (is_arg_prefix(arg, "cputime", 2)) {
 			cputime = true;
 			JOB_TIME = "CPU_TIME";
 		 	attrs.append( ATTR_JOB_REMOTE_USER_CPU );
 		}
 		else
-		if (match_prefix( arg, "currentrun")) {
+		if (is_arg_prefix(arg, "currentrun", 2)) {
 			current_run = true;
 		}
 		else
-		if (match_prefix( arg, "grid" ) ) {
+		if (is_arg_prefix(arg, "grid", 2 )) {
 			// grid is a superset of globus, so we can't do grid if globus has been specifed
 			if ( ! globus) {
 				dash_grid = true;
@@ -1410,11 +1546,12 @@ processCommandLineArguments (int argc, char *argv[])
 				attrs.append( ATTR_GRID_RESOURCE );
 				attrs.append( ATTR_GRID_JOB_STATUS );
 				attrs.append( ATTR_GLOBUS_STATUS );
+    			attrs.append( ATTR_EC2_REMOTE_VM_NAME );
 				Q.addAND( "JobUniverse == 9" );
 			}
 		}
 		else
-		if( match_prefix( arg, "globus" ) ) {
+		if (is_arg_prefix(arg, "globus", 5 )) {
 			Q.addAND( "GlobusStatus =!= UNDEFINED" );
 			globus = true;
 			if (dash_grid) {
@@ -1427,14 +1564,15 @@ processCommandLineArguments (int argc, char *argv[])
 			}
 		}
 		else
-		if( match_prefix( arg, "debug" ) ) {
+		if (is_arg_colon_prefix(arg, "debug", &pcolon, 3)) {
 			// dprintf to console
-			Termlog = 1;
-			p_funcs = get_param_functions();
-			dprintf_config ("TOOL", p_funcs);
+			dprintf_set_tool_debug("TOOL", 0);
+			if (pcolon && pcolon[1]) {
+				set_debug_flags( ++pcolon, 0 );
+			}
 		}
 		else
-		if (match_prefix(arg,"io")) {
+		if (is_arg_prefix(arg, "io", 1)) {
 			// goodput and show_io require the same column
 			// real-estate, so they're mutually exclusive
 			show_io = true;
@@ -1446,7 +1584,7 @@ processCommandLineArguments (int argc, char *argv[])
 			attrs.append(ATTR_BUFFER_SIZE);
 			attrs.append(ATTR_BUFFER_BLOCK_SIZE);
 		}
-		else if( match_prefix( arg, "dag" ) ) {
+		else if (is_arg_prefix(arg, "dag", 2)) {
 			dag = true;
 			attrs.clearAll();
 			if( g_stream_results  ) {
@@ -1455,28 +1593,46 @@ processCommandLineArguments (int argc, char *argv[])
 				exit( 1 );
 			}
 		}
-		else if (match_prefix(arg, "expert")) {
+		else if (is_arg_prefix(arg, "expert", 1)) {
 			expert = true;
 			attrs.clearAll();
 		}
-        else if (match_prefix(arg, "jobads")) {
+		else if (is_arg_prefix(arg, "jobads", 1)) {
 			if (argc <= i+1) {
-				fprintf( stderr, "Error: Argument -jobads require filename\n");
+				fprintf( stderr, "Error: Argument -jobads requires a filename\n");
 				exit(1);
 			} else {
-                i++;
-                jobads_file = strdup(argv[i]);
-            }
-        }
-        else if (match_prefix(arg, "machineads")) {
+				i++;
+				jobads_file = strdup(argv[i]);
+			}
+		}
+		else if (is_arg_prefix(arg, "userlog", 1)) {
 			if (argc <= i+1) {
-				fprintf( stderr, "Error: Argument -machineads require filename\n");
+				fprintf( stderr, "Error: Argument -userlog requires a filename\n");
 				exit(1);
 			} else {
-                i++;
-                machineads_file = strdup(argv[i]);
-            }
-        }
+				i++;
+				userlog_file = strdup(argv[i]);
+			}
+		}
+		else if (is_arg_prefix(arg, "machineads", 1)) {
+			if (argc <= i+1) {
+				fprintf( stderr, "Error: Argument -machineads requires a filename\n");
+				exit(1);
+			} else {
+				i++;
+				machineads_file = strdup(argv[i]);
+			}
+		}
+		else if (is_arg_colon_prefix(arg, "userprios", &pcolon, 5)) {
+			if (argc <= i+1) {
+				fprintf( stderr, "Error: Argument -userprios requires a filename\n");
+				exit(1);
+			} else {
+				i++;
+				userprios_file = strdup(argv[i]);
+			}
+		}
 #ifdef HAVE_EXT_POSTGRESQL
 		else if (match_prefix(arg, "avgqueuetime")) {
 				/* if user want average wait time, we will perform direct DB query */
@@ -1484,12 +1640,12 @@ processCommandLineArguments (int argc, char *argv[])
 			directDBquery =  true;
 		}
 #endif /* HAVE_EXT_POSTGRESQL */
-        else if (match_prefix(arg, "version")) {
+        else if (is_arg_prefix(arg, "version", 1)) {
 			printf( "%s\n%s\n", CondorVersion(), CondorPlatform() );
 			exit(0);
         }
 		else
-		if (match_prefix (arg, "stream")) {
+		if (is_arg_prefix (arg, "stream", 2)) {
 			g_stream_results = true;
 			if( dag ) {
 				fprintf( stderr, "-stream-results and -dag are incompatible\n" );
@@ -1505,7 +1661,7 @@ processCommandLineArguments (int argc, char *argv[])
 	}
 
 		//Added so -long or -xml can be listed before other options
-	if(verbose && !custom_attributes) {
+	if(dash_long && !custom_attributes) {
 		attrs.clearAll();
 	}
 }
@@ -1685,10 +1841,17 @@ bufferJobShort( ClassAd *ad ) {
 
 	MyString args_string;
 	ArgList::GetArgsStringForDisplay(ad,&args_string);
-	if (!args_string.IsEmpty()) {
-		buffer.sprintf( "%s %s", condor_basename(cmd), args_string.Value() );
+
+	std::string description;
+
+	ad->EvalString(ATTR_JOB_DESCRIPTION, NULL, description);
+	if ( !description.empty() ){
+		buffer.formatstr("%s", description.c_str());
+	}
+	else if (!args_string.IsEmpty()) {
+		buffer.formatstr( "%s %s", condor_basename(cmd), args_string.Value() );
 	} else {
-		buffer.sprintf( "%s", condor_basename(cmd) );
+		buffer.formatstr( "%s", condor_basename(cmd) );
 	}
 	free(cmd);
 	utime = job_time(utime,ad);
@@ -1715,8 +1878,10 @@ bufferJobShort( ClassAd *ad ) {
 	}
 
 	sprintf( return_buff,
-			 widescreen ? "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f %s\n"
-			            : "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f %-18.18s\n",
+			 widescreen ? description.empty() ? "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f %s\n"
+			                                   : "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f (%s)\n"
+			            : description.empty() ? "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f %-18.18s\n"
+				                           : "%4d.%-3d %-14s %-11s %-12s %-2c %-3d %-4.1f (%-17.17s)\n",
 			 cluster,
 			 proc,
 			 format_owner( owner, ad ),
@@ -1779,7 +1944,7 @@ format_remote_host (char *, AttrList *ad)
 
 	int universe = CONDOR_UNIVERSE_STANDARD;
 	ad->LookupInteger( ATTR_JOB_UNIVERSE, universe );
-	if (universe == CONDOR_UNIVERSE_SCHEDULER &&
+	if (((universe == CONDOR_UNIVERSE_SCHEDULER) || (universe == CONDOR_UNIVERSE_LOCAL)) &&
 		addr.from_sinful(scheddAddr) == true) {
 		MyString hostname = get_hostname(addr);
 		if (hostname.Length() > 0) {
@@ -1789,15 +1954,15 @@ format_remote_host (char *, AttrList *ad)
 			return unknownHost;
 		}
 	} else if (universe == CONDOR_UNIVERSE_GRID) {
-		if (ad->LookupString(ATTR_GRID_RESOURCE,host_result) == 1 )
+		if (ad->LookupString(ATTR_EC2_REMOTE_VM_NAME,host_result,sizeof(host_result)) == 1)
 			return host_result;
-		else if (ad->LookupString(ATTR_EC2_REMOTE_VM_NAME,host_result) == 1)
+		else if (ad->LookupString(ATTR_GRID_RESOURCE,host_result, sizeof(host_result)) == 1 )
 			return host_result;
 		else
 			return unknownHost;
 	}
 
-	if (ad->LookupString(ATTR_REMOTE_HOST, host_result) == 1) {
+	if (ad->LookupString(ATTR_REMOTE_HOST, host_result, sizeof(host_result)) == 1) {
 		if( is_valid_sinful(host_result) && 
 			addr.from_sinful(host_result) == true ) {
 			MyString hostname = get_hostname(addr);
@@ -2110,7 +2275,7 @@ format_gridType( int , AttrList * ad )
 #endif
 
 static const char *
-format_gridResource( char * grid_res, AttrList * /*ad*/, Formatter & /*fmt*/ )
+format_gridResource( char * grid_res, AttrList * ad, Formatter & /*fmt*/ )
 {
 	std::string grid_type;
 	std::string str = grid_res;
@@ -2155,19 +2320,21 @@ format_gridResource( char * grid_res, AttrList * /*ad*/, Formatter & /*fmt*/ )
 	mystr.replaceString(" ", "/");
 	mgr = mystr.Value();
 
-	static char result_str[1024];
-	//sprintf(result, " %-6.6s %-8.8s %-18.18s  ", grid_type.c_str(), mgr.c_str(), host.c_str());
-	//sprintf(result, " %-6s %-8s %18s  ", grid_type.c_str(), mgr.c_str(), host.c_str());
-	sprintf(result_str, "%s->%s %s", grid_type.c_str(), mgr.c_str(), host.c_str());
+    static char result_str[1024];
+    if( MATCH == grid_type.compare( "ec2" ) ) {
+        // mgr = str.substr( ixHost, ix3 - ixHost - 3 );
+        char rvm[MAXHOSTNAMELEN];
+        if( ad->LookupString( ATTR_EC2_REMOTE_VM_NAME, rvm, sizeof( rvm ) ) ) {
+            host = rvm;
+        }
+        
+        snprintf( result_str, 1024, "%s %s", grid_type.c_str(), host.c_str() );
+    } else {
+    	snprintf(result_str, 1024, "%s->%s %s", grid_type.c_str(), mgr.c_str(), host.c_str());
+    }
+        	
 	ix2 = strlen(result_str);
-	/*
-	while (ix2 < width) {
-		result[ix2++] = ' ';
-		result[ix2] = 0;
-	}
-	*/
 	if ( ! widescreen) ix2 = width;
-	//result[ix2++] = ' ';
 	result_str[ix2] = 0;
 	return result_str;
 }
@@ -2245,7 +2412,9 @@ usage (const char *myName)
 		"\t\t-xml\t\t\tDisplay entire classads, but in XML\n"
 		"\t\t-attributes X,Y,...\tAttributes to show in -xml and -long\n"
 		"\t\t-format <fmt> <attr>\tPrint attribute attr using format fmt\n"
+		"\t\t-autoformat:[V,ntlh] <attr> [attr2 [attr3 ...]]\t\t    Print attr(s) with automatic formatting\n"
 		"\t\t-analyze\t\tPerform schedulability analysis on jobs\n"
+		"\t\t-reverse\t\tPerform schedulability analysis on machines\n"
 		"\t\t-run\t\t\tGet information about running jobs\n"
 		"\t\t-hold\t\t\tGet information about jobs on hold\n"
 		"\t\t-globus\t\t\tGet information about Condor-G jobs of type globus\n"
@@ -2255,9 +2424,12 @@ usage (const char *myName)
 		"\t\t-io\t\t\tShow information regarding I/O\n"
 		"\t\t-dag\t\t\tSort DAG jobs under their DAGMan\n"
 		"\t\t-expert\t\t\tDisplay shorter error messages\n"
-		"\t\t-constraint <expr>\tAdd constraint on classads\n"
+		"\t\t-constraint <expr>\tAdd constraint on job classads\n"
 		"\t\t-jobads <file>\t\tFile of job ads to display\n"
+		"\t\t-userlog <file>\t\tFile of user log to display\n"
 		"\t\t-machineads <file>\tFile of machine ads for analysis\n"
+		"\t\t-machineconstraint <expr>\tAnalyze machines matching the constraint\n"
+		"\t\t-userprios <file>\tFile of user priorities for analysis\n"
 #ifdef HAVE_EXT_POSTGRESQL
 		"\t\t-direct <rdbms | schedd>\n"
 		"\t\t\tPerform a direct query to the rdbms\n"
@@ -2277,7 +2449,7 @@ usage (const char *myName)
 
 void full_header(bool useDB,char const *quill_name,char const *db_ipAddr, char const *db_name,char const *lastUpdate, char const *scheddName, char const *scheddAddress,char const *scheddMachine)
 {
-	if (! customFormat && !verbose ) {
+	if (! customFormat && !dash_long ) {
 		if (useDB) {
 			printf ("\n\n-- Quill: %s : %s : %s : %s\n", quill_name, 
 					db_ipAddr, db_name, lastUpdate);
@@ -2312,11 +2484,9 @@ void full_header(bool useDB,char const *quill_name,char const *db_ipAddr, char c
 	}
 	if( use_xml ) {
 			// keep this consistent with AttrListList::fPrintAttrListList()
-		ClassAdXMLUnparser  unparser;
-		MyString xml;
-		unparser.SetUseCompactSpacing(false);
-		unparser.AddXMLFileHeader(xml);
-		printf("%s\n", xml.Value());
+		std::string xml;
+		AddClassAdXMLFileHeader(xml);
+		printf("%s\n", xml.c_str());
 	}
 }
 
@@ -2691,7 +2861,7 @@ show_queue_buffered( const char* v1, const char* v2, const char* v3, const char*
 			fprintf( stderr, 
 					"\n-- Failed to fetch ads from db [%s] at database "
 					"server %s\n%s\n",
-					db_name, db_ipAddr, errstack.getFullText(true) );
+					db_name, db_ipAddr, errstack.getFullText(true).c_str() );
 
 			if(dbconn) {
 				free(dbconn);
@@ -2730,12 +2900,12 @@ show_queue_buffered( const char* v1, const char* v2, const char* v3, const char*
 			switch(fetchResult) {
 				case Q_PARSE_ERROR:
 				case Q_INVALID_CATEGORY:
-					fprintf(stderr, "\n-- Parse error in constraint expression \"%s\"\n", user_constraint);
+					fprintf(stderr, "\n-- Parse error in constraint expression \"%s\"\n", user_job_constraint);
 					break;
 				default:
 					fprintf(stderr,
 						"\n-- Failed to fetch ads from: %s : %s\n%s\n",
-						scheddAddress, scheddMachine, errstack.getFullText(true) );
+						scheddAddress, scheddMachine, errstack.getFullText(true).c_str() );
 			}
 
 			return false;
@@ -2803,11 +2973,9 @@ show_queue_buffered( const char* v1, const char* v2, const char* v3, const char*
 		}
 		if( use_xml ) {
 				// keep this consistent with AttrListList::fPrintAttrListList()
-			ClassAdXMLUnparser  unparser;
-			MyString xml;
-			unparser.SetUseCompactSpacing(false);
-			unparser.AddXMLFileFooter(xml);
-			printf("%s\n", xml.Value());
+			std::string xml;
+			AddClassAdXMLFileFooter(xml);
+			printf("%s\n", xml.c_str());
 		}
 	}
 
@@ -2930,18 +3098,18 @@ process_buffer_line( ClassAd *job )
 	}
 
 	if (use_xml) {
-		MyString s;
+		std::string s;
 		StringList *attr_white_list = attrs.isEmpty() ? NULL : &attrs;
 		job->sPrintAsXML(s,attr_white_list);
-		tempCPS->string = strnewp( s.Value() );
-	} else if( verbose ) {
+		tempCPS->string = strnewp( s.c_str() );
+	} else if( dash_long ) {
 		MyString s;
 		StringList *attr_white_list = attrs.isEmpty() ? NULL : &attrs;
 		job->sPrint(s,attr_white_list);
 		s += "\n";
 		tempCPS->string = strnewp( s.Value() );
 	} else if( better_analyze ) {
-		tempCPS->string = strnewp( doRunAnalysisToBuffer( job, g_cur_schedd_for_process_buffer_line ) );
+		tempCPS->string = strnewp( doJobRunAnalysisToBuffer( job, g_cur_schedd_for_process_buffer_line ) );
 	} else if ( show_io ) {
 		tempCPS->string = strnewp( buffer_io_display( job ) );
 	} else if ( usingPrintMask ) {
@@ -2980,7 +3148,6 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 	const char *query_password = 0;
 
 	ClassAdList jobs; 
-	ClassAd		*job;
 #if 0
 	static bool	setup_mask = false;
 #endif
@@ -2993,14 +3160,53 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 
 	char *lastUpdate=NULL;
 
-    if (jobads_file != NULL) {
+	// setup constraint variables to use in some of the later code.
+	const char * constr = NULL;
+	CondorID * JobIds = NULL;
+	int cJobIds = constrID.size();
+	if (cJobIds > 0) JobIds = &constrID[0];
+
+	std::string constr_string; // to hold the return from ExprTreeToString()
+	ExprTree *tree = NULL;
+	Q.rawQuery(tree);
+	if (tree) {
+		constr_string = ExprTreeToString(tree);
+		constr = constr_string.c_str();
+		delete tree;
+	}
+
+	if (better_analyze && verbose) {
+		fprintf(stderr, "Fetching job ads for analysis...");
+	}
+
+	bool analyze_no_schedd = false;
+	CondorQClassAdFileParseHelper jobads_file_parse_helper;
+	if (jobads_file != NULL) {
 		/* get the "q" from the job ads file */
-        if (!read_classad_file(jobads_file, jobs)) {
+		if (!read_classad_file(jobads_file, jobs, &jobads_file_parse_helper, constr)) {
+			return false;
+		}
+		// if we are doing analysis, print out the schedd name and address
+		// that we got from the classad file.
+		if (better_analyze && ! jobads_file_parse_helper.schedd_name.empty()) {
+			scheddName    = jobads_file_parse_helper.schedd_name.c_str();
+			scheddAddress = jobads_file_parse_helper.schedd_addr.c_str();
+			scheddMachine = "Unknown";
+			scheddVersion = "";
+			analyze_no_schedd = true;
+			}
+		
+		/* The variable UseDB should be false in this branch since it was set 
+			in main() because jobads_file had a good value. */
+
+    } else if (userlog_file != NULL) {
+        if (!userlog_to_classads(userlog_file, jobs, JobIds, cJobIds, constr)) {
+            fprintf(stderr, "Can't open user log: %s\n", userlog_file);
             return false;
         }
 		
 		/* The variable UseDB should be false in this branch since it was set 
-			in main() because jobads_file had a good value. */
+			in main() because userlog_file had a good value. */
 
     } else {
 		/* else get the job queue either from quill or the schedd. */
@@ -3027,7 +3233,7 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 			if( Q.fetchQueueFromDB(jobs, lastUpdate, dbconn, &errstack) != Q_OK ) {
 				fprintf( stderr,
 						"\n-- Failed to fetch ads from: %s : %s\n%s\n",
-						db_ipAddr, db_name, errstack.getFullText(true) );
+						db_ipAddr, db_name, errstack.getFullText(true).c_str() );
 				if(dbconn) {
 					free(dbconn);
 				}
@@ -3051,12 +3257,12 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 			switch(fetchResult) {
 				case Q_PARSE_ERROR:
 				case Q_INVALID_CATEGORY:
-					fprintf(stderr, "\n-- Parse error in constraint expression \"%s\"\n", user_constraint);
+					fprintf(stderr, "\n-- Parse error in constraint expression \"%s\"\n", user_job_constraint);
 					break;
 				default:
 					fprintf(stderr,
 						"\n-- Failed to fetch ads from: %s : %s\n%s\n",
-						scheddAddress, scheddMachine, errstack.getFullText(true) );
+						scheddAddress, scheddMachine, errstack.getFullText(true).c_str() );
 			}
 			return false;
 			}
@@ -3065,16 +3271,20 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 
 		// sort jobs by (cluster.proc) if don't query database
 	if (!useDB) {
+		if (better_analyze && verbose) { fprintf(stderr, "Sorting..."); }
 		jobs.Sort( (SortFunctionType)JobSort );
 	}
 
 		// check if job is being analyzed
 	if( better_analyze ) {
+
+		if (verbose) { fprintf(stderr, "Done.\nFound %d job ads.\n", jobs.Length()); }
+
 			// print header
 		if (useDB) {
 			printf ("\n\n-- Quill: %s : %s : %s\n", quill_name, 
 					db_ipAddr, db_name);
-		} else if( querySchedds ) {
+		} else if (querySchedds || analyze_no_schedd) {
 			printf ("\n\n-- Schedd: %s : %s\n", scheddName, scheddAddress);
 		} else {
 			printf ("\n\n-- Submitter: %s : %s : %s\n", scheddName, 
@@ -3082,13 +3292,28 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 		}
 
 		Daemon schedd_daemon(DT_SCHEDD,scheddName,pool ? pool->addr() : NULL);
-		schedd_daemon.locate();
+		if ( ! analyze_no_schedd)
+			schedd_daemon.locate();
 
-		jobs.Open();
-		while( ( job = jobs.Next() ) ) {
-			doRunAnalysis( job, &schedd_daemon );
+		if (reverse_analyze) {
+			int console_width = widescreen ? getConsoleWindowSize() : 80;
+			startdAds.Open();
+			if (analyze_detail_level <= 0) {
+				printf("%-24.24s %12.12s %12.12s %9.9s\n", "Slot", "Job", "Slot", "");
+				printf("%-24.24s %12.12s %12.12s %9.9s\n", "Name", "Requirements", "Requirements", "Total");
+				printf("%-24.24s %12.12s %12.12s %9.9s\n", "------------------------", "---------", "---------", "---------");
+			}
+			while (ClassAd *slot = startdAds.Next()) {
+				doSlotRunAnalysis(slot, jobs, analyze_no_schedd ? NULL : &schedd_daemon, console_width);
+			}
+			startdAds.Close();
+		} else {
+			jobs.Open();
+			while (ClassAd *job = jobs.Next()) {
+				doJobRunAnalysis(job, analyze_no_schedd ? NULL : &schedd_daemon);
+			}
+			jobs.Close();
 		}
-		jobs.Close();
 
 		if(lastUpdate) {
 			free(lastUpdate);
@@ -3114,7 +3339,7 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 			// initialize counters
 		malformed = idle = running = held = completed = suspended = 0;
 		
-		if( verbose || use_xml ) {
+		if( dash_long || use_xml ) {
 			StringList *attr_white_list = attrs.isEmpty() ? NULL : &attrs;
 			jobs.fPrintAttrListList( stdout, use_xml ? true : false, attr_white_list);
 		} else if( customFormat ) {
@@ -3240,14 +3465,14 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 		} else if( show_io ) {
 			short_header();
 			jobs.Open();
-			while( (job=jobs.Next()) ) {
+			while(ClassAd *job = jobs.Next()) {
 				io_display( job );
 			}
 			jobs.Close();
 		} else {
 			short_header();
 			jobs.Open();
-			while( (job=jobs.Next()) ) {
+			while(ClassAd *job = jobs.Next()) {
 				displayJobShort( job );
 			}
 			jobs.Close();
@@ -3270,6 +3495,17 @@ show_queue( const char* v1, const char* v2, const char* v3, const char* v4, bool
 	return true;
 }
 
+static bool is_slot_name(const char * psz)
+{
+	// if string contains only legal characters for a slotname, then assume it's a slotname.
+	// legal characters are a-zA-Z@_\.\-
+	while (*psz) {
+		if (*psz != '-' && *psz != '.' && *psz != '@' && *psz != '_' && ! isalnum(*psz))
+			return false;
+		++psz;
+	}
+	return true;
+}
 
 static void
 setupAnalysis()
@@ -3279,15 +3515,31 @@ setupAnalysis()
 	char		buffer[64];
 	char		*preq;
 	ClassAd		*ad;
-	char		remoteUser[128];
+	string		remoteUser;
 	int			index;
+
+	
+	if (verbose) {
+		fprintf(stderr, "Fetching machine ads for analysis...");
+	}
 
 	// fetch startd ads
     if (machineads_file != NULL) {
-        if (!read_classad_file(machineads_file, startdAds)) {
+        if (!read_classad_file(machineads_file, startdAds, NULL, NULL)) {
             exit ( 1 );
         }
     } else {
+		if (user_slot_constraint) {
+			if (is_slot_name(user_slot_constraint)) {
+				std::string str;
+				formatstr(str, "(%s==\"%s\") || (%s==\"%s\")",
+					      ATTR_NAME, user_slot_constraint, ATTR_MACHINE, user_slot_constraint);
+				query.addORConstraint (str.c_str());
+				single_machine = true;
+			} else {
+				query.addANDConstraint (user_slot_constraint);
+			}
+		}
         rval = Collectors->query (query, startdAds);
         if( rval != Q_OK ) {
             fprintf( stderr , "Error:  Could not fetch startd ads\n" );
@@ -3295,14 +3547,42 @@ setupAnalysis()
         }
     }
 
-	// fetch submittor prios
-	fetchSubmittorPrios();
+	if (verbose) {
+		fprintf(stderr, "Done.\nFound %d machines ads.\n", startdAds.Length());
+	}
+
+	if (verbose) {
+		fprintf(stderr, "Fetching user priorities for analysis...");
+	}
+
+	int cPrios = 0;
+	if (userprios_file != NULL) {
+		cPrios = read_userprio_file(userprios_file, prioTable);
+		if (cPrios < 0) {
+			PRAGMA_REMIND("TJ: don't exit here, just analyze without userprio information")
+			exit (1);
+		}
+	} else {
+		// fetch submittor prios
+		cPrios = fetchSubmittorPriosFromNegotiator(prioTable);
+		if (cPrios < 0) {
+			PRAGMA_REMIND("TJ: don't exit here, just analyze without userprio information")
+			exit(1);
+		}
+	}
+
+	if (verbose) {
+		fprintf(stderr, "Done.\nFound %d submitters\n", cPrios);
+	} else if (cPrios <= 0) {
+		printf( "Warning:  Found no submitters\n" );
+	}
+
 
 	// populate startd ads with remote user prios
 	startdAds.Open();
 	while( ( ad = startdAds.Next() ) ) {
 		if( ad->LookupString( ATTR_REMOTE_USER , remoteUser ) ) {
-			if( ( index = findSubmittor( remoteUser ) ) != -1 ) {
+			if( ( index = findSubmittor( remoteUser.c_str() ) ) != -1 ) {
 				sprintf( buffer , "%s = %f" , ATTR_REMOTE_USER_PRIO , 
 							prioTable[index].prio );
 				ad->Insert( buffer );
@@ -3348,14 +3628,13 @@ setupAnalysis()
 }
 
 
-static void
-fetchSubmittorPrios()
+static int
+fetchSubmittorPriosFromNegotiator(ExtArray<PrioEntry> & prios)
 {
 	AttrList	al;
 	char  	attrName[32], attrPrio[32];
   	char  	name[128];
   	float 	priority;
-	int		i = 1;
 
 	Daemon	negotiator( DT_NEGOTIATOR, NULL, pool ? pool->addr() : NULL );
 
@@ -3365,7 +3644,7 @@ fetchSubmittorPrios()
 	if (!(sock = negotiator.startCommand( GET_PRIORITY, Stream::reli_sock, 0))) {
 		fprintf( stderr, "Error: Could not connect to negotiator (%s)\n",
 				 negotiator.fullHostname() );
-		exit( 1 );
+		return -1;
 	}
 
 	sock->end_of_message();
@@ -3374,43 +3653,1082 @@ fetchSubmittorPrios()
 		fprintf( stderr, 
 				 "Error:  Could not get priorities from negotiator (%s)\n",
 				 negotiator.fullHostname() );
-		exit( 1 );
+		return -1;
 	}
 	sock->close();
 	delete sock;
 
 
-	i = 1;
-	while( i ) {
-    	sprintf( attrName , "Name%d", i );
-    	sprintf( attrPrio , "Priority%d", i );
+	int cPrios = 0;
+	while( true ) {
+		sprintf( attrName , "Name%d", cPrios+1 );
+		sprintf( attrPrio , "Priority%d", cPrios+1 );
 
-    	if( !al.LookupString( attrName, name ) || 
+		if( !al.LookupString( attrName, name, sizeof(name) ) || 
 			!al.LookupFloat( attrPrio, priority ) )
-            break;
+			break;
 
-		prioTable[i-1].name = name;
-		prioTable[i-1].prio = priority;
-		i++;
+		prios[cPrios].name = name;
+		prios[cPrios].prio = priority;
+		++cPrios;
 	}
 
-	if( i == 1 ) {
-		printf( "Warning:  Found no submitters\n" );
+	return cPrios;
+}
+
+// parse lines of the form "attrNNNN = value" and return attr, NNNN and value as separate fields.
+static int parse_userprio_line(const char * line, std::string & attr, std::string & value)
+{
+	int id = 0;
+
+	// skip over the attr part
+	const char * p = line;
+	while (*p && isspace(*p)) ++p;
+
+	// parse prefixNNN and set id=NNN and attr=prefix
+	const char * pattr = p;
+	while (*p) {
+		if (isdigit(*p)) {
+			attr.assign(pattr, p-pattr);
+			id = atoi(p);
+			while (isdigit(*p)) ++p;
+			break;
+		} else if  (isspace(*p)) {
+			break;
+		}
+		++p;
+	}
+	if (id <= 0)
+		return -1;
+
+	// parse = with or without whitespace.
+	while (isspace(*p)) ++p;
+	if (*p != '=')
+		return -1;
+	++p;
+	while (isspace(*p)) ++p;
+
+	// parse value, remove "" from around strings 
+	if (*p == '"')
+		value.assign(p+1,strlen(p)-2);
+	else
+		value = p;
+	return id;
+}
+
+static int read_userprio_file(const char *filename, ExtArray<PrioEntry> & prios)
+{
+	int cPrios = 0;
+
+	FILE *file = safe_fopen_wrapper_follow(filename, "r");
+	if (file == NULL) {
+		fprintf(stderr, "Can't open file of user priorities: %s\n", filename);
+		return -1;
+	} else {
+		while (const char * line = getline(file)) {
+			std::string attr, value;
+			int id = parse_userprio_line(line, attr, value);
+			if (id <= 0) {
+				// there are valid attributes that we want to ignore that return -1 from
+				// this call, so just skip them
+				continue;
+			}
+
+			if (attr == "Priority") {
+				float priority = atof(value.c_str());
+				prios[id].prio = priority;
+				cPrios = MAX(cPrios, id);
+			} else if (attr == "Name") {
+				prios[id].name = value;
+				cPrios = MAX(cPrios, id);
+			}
+		}
+		fclose(file);
+	}
+	return cPrios;
+}
+
+#include "classad/classadCache.h" // for CachedExprEnvelope
+
+// AnalyzeThisSubExpr recursively walks an ExprTree and builds a vector of
+// this class, one entry for each clause of the ExprTree that deserves to be
+// separately evaluated. 
+//
+class AnalSubExpr {
+
+public:
+	// these members are set while parsing the SubExpr
+	classad::ExprTree *  tree; // this pointer is NOT owned by this class, and should not be freeed from here!!
+	int  depth;	   // nesting depth (parens only)
+	int  logic_op; // 0 = non-logic, 1=!, 2=||, 3=&&, 4=?:
+	int  ix_left;
+	int  ix_right;
+	int  ix_grip;
+	int  ix_effective;  // when this clause reduces down to exactly the same as another clause.
+	std::string label;
+
+	// these are used during iteration of Target ads against each of the sub-expressions
+	int  matches;
+	bool constant;
+	int  hard_value;  // if constant, this is set to the value
+	bool dont_care;
+	int  pruned_by;   // index of entry that set dont_care
+	bool reported;
+	std::string unparsed;
+
+	AnalSubExpr(classad::ExprTree * expr, const char * lbl, int dep, int logic=0)
+		: tree(expr)
+		, depth(dep)
+		, logic_op(logic)
+		, ix_left(-1)
+		, ix_right(-1)
+		, ix_grip(-1)
+		, ix_effective(-1)
+		, label(lbl)
+		, matches(0)
+		, constant(false)
+		, hard_value(-1)
+		, dont_care(false)
+		, pruned_by(-1)
+		, reported(false)
+		{
+		};
+
+	void CheckIfConstant(ClassAd & ad)
+	{
+		classad::ClassAdUnParser unparser;
+		unparser.Unparse(unparsed, tree);
+
+		StringList my;
+		StringList target;
+		ad.GetExprReferences(unparsed.c_str(), my, target);
+		constant = target.isEmpty();
+		if (constant) {
+			hard_value = 0;
+			bool bool_val = false;
+			classad::Value eval_result;
+			if (EvalExprTree(tree, &ad, NULL, eval_result)
+				&& eval_result.IsBooleanValue(bool_val)
+				&& bool_val) {
+				hard_value = 1;
+			}
+		}
+	};
+
+	const char * Label()
+	{
+		if (label.empty()) {
+			if (MakeLabel(label)) {
+				// nothing to do.
+			} else if ( ! unparsed.empty()) {
+				return unparsed.c_str();
+			} else {
+				return "empty";
+			}
+		}
+		return label.c_str();
+	}
+
+	bool MakeLabel(std::string & lbl)
+	{
+		if (logic_op) {
+			if (logic_op < 2)
+				formatstr(lbl, " ! [%d]", ix_left);
+			else if (logic_op > 3)
+				formatstr(lbl, "[%d] ? [%d] : [%d]", ix_left, ix_right, ix_grip);
+			else
+				formatstr(lbl, "[%d] %s [%d]", ix_left, (logic_op==2) ? "||" : "&&", ix_right);
+			return true;
+		}
+		return false;
+	}
+
+	// helper function that returns width-adjusted step numbers
+	const char * StepLabel(std::string & str, int index, int width=4) {
+		formatstr(str, "[%d]      ", index);
+		str.erase(width+2, string::npos);
+		return str.c_str();
+	}
+};
+
+// printf formatting helper for indenting
+#if 0 // indent using counted spaces
+static const char * GetIndentPrefix(int indent) {
+  #if 0
+	static std::string str = "                                            ";
+	while (str.size()/1 < indent) { str += "  "; }
+	return &str.c_str()[str.size() - 1*indent];
+  #else  // indent using N> 
+	static std::string str;
+	formatstr(str, "%d>     ", indent);
+	str.erase(5, string::npos);
+	return str.c_str();
+  #endif
+}
+#else
+static const char * GetIndentPrefix(int) { return ""; }
+#endif
+
+static std::string strStep;
+#define StepLbl(ii) subs[ii].StepLabel(strStep, ii, 3)
+
+int AnalyzeThisSubExpr(classad::ExprTree* expr, std::vector<AnalSubExpr> & clauses, bool must_store, int depth)
+{
+	classad::ExprTree::NodeKind kind = expr->GetKind( );
+	classad::ClassAdUnParser unparser;
+
+	bool show_work = false;
+	bool evaluate_logical = false;
+	int  child_depth = depth;
+	int  logic_op = 0;
+	bool push_it = must_store;
+	bool chatty = false;
+	const char * pop = "";
+	int ix_me = -1, ix_left = -1, ix_right = -1, ix_grip = -1;
+
+	std::string strLabel;
+
+	classad::ExprTree *left=NULL, *right=NULL, *gripping=NULL;
+	switch(kind) {
+		case classad::ExprTree::LITERAL_NODE: {
+			classad::Value val;
+			classad::Value::NumberFactor factor;
+			((classad::Literal*)expr)->GetComponents(val, factor);
+			unparser.UnparseAux(strLabel, val, factor);
+			if (chatty) {
+				printf("     %d:const : %s\n", kind, strLabel.c_str());
+			}
+			show_work = false;
+			break;
+		}
+
+		case classad::ExprTree::ATTRREF_NODE: {
+			bool absolute;
+			std::string strAttr; // simple attr, need unparse to get TARGET. or MY. prefix.
+			((classad::AttributeReference*)expr)->GetComponents(left, strAttr, absolute);
+			if (chatty) {
+				printf("     %d:attr  : %s %s at %p\n", kind, absolute ? "abs" : "ref", strAttr.c_str(), left);
+			}
+			if (absolute) {
+				left = NULL;
+			}
+			show_work = false;
+			break;
+		}
+
+		case classad::ExprTree::OP_NODE: {
+			classad::Operation::OpKind op = classad::Operation::__NO_OP__;
+			((classad::Operation*)expr)->GetComponents(op, left, right, gripping);
+			pop = "??";
+			if (op <= classad::Operation::__LAST_OP__) 
+				pop = unparser.opString[op];
+			if (chatty) {
+				printf("     %d:op    : %2d:%s %p %p %p\n", kind, op, pop, left, right, gripping);
+			}
+			if (op >= classad::Operation::__COMPARISON_START__ && op <= classad::Operation::__COMPARISON_END__) {
+				//show_work = true;
+				evaluate_logical = false;
+				push_it = true;
+			} else if (op >= classad::Operation::__LOGIC_START__ && op <= classad::Operation::__LOGIC_END__) {
+				//show_work = true;
+				evaluate_logical = true;
+				logic_op = 1 + (int)(op - classad::Operation::__LOGIC_START__);
+				push_it = true;
+			} else if (op == classad::Operation::PARENTHESES_OP){
+				child_depth += 1;
+			} else {
+				//show_work = false;
+			}
+			break;
+		}
+
+		case classad::ExprTree::FN_CALL_NODE: {
+			std::vector<classad::ExprTree*> args;
+			((classad::FunctionCall*)expr)->GetComponents(strLabel, args);
+			strLabel += "()";
+			if (chatty) {
+				printf("     %d:call  : %s() %d args\n", kind, strLabel.c_str(), (int)args.size());
+			}
+			break;
+		}
+
+		case classad::ExprTree::CLASSAD_NODE: {
+			vector< std::pair<string, classad::ExprTree*> > attrs;
+			((classad::ClassAd*)expr)->GetComponents(attrs);
+			if (chatty) {
+				printf("     %d:ad    : %d attrs\n", kind, (int)attrs.size());
+			}
+			break;
+		}
+
+		case classad::ExprTree::EXPR_LIST_NODE: {
+			vector<classad::ExprTree*> exprs;
+			((classad::ExprList*)expr)->GetComponents(exprs);
+			if (chatty) {
+				printf("     %d:list  : %d items\n", kind, (int)exprs.size());
+			}
+			break;
+		}
+		
+		case classad::ExprTree::EXPR_ENVELOPE: {
+			// recurse b/c we indirect for this element.
+			left = ((classad::CachedExprEnvelope*)expr)->get();
+			if (chatty) {
+				printf("     %d:env  :     %p \n", kind, left);
+			}
+			break;
+		}
+	}
+
+	if (left) ix_left = AnalyzeThisSubExpr(left, clauses, evaluate_logical, child_depth);
+	if (right) ix_right = AnalyzeThisSubExpr(right, clauses, evaluate_logical, child_depth);
+	if (gripping) ix_grip = AnalyzeThisSubExpr(gripping, clauses, evaluate_logical, child_depth);
+
+	if (push_it) {
+		if (left && ! right && ix_left >= 0) {
+			ix_me = ix_left;
+		} else {
+			ix_me = (int)clauses.size();
+			AnalSubExpr sub(expr, strLabel.c_str(), depth, logic_op);
+			sub.ix_left = ix_left;
+			sub.ix_right = ix_right;
+			sub.ix_grip = ix_grip;
+			clauses.push_back(sub);
+		}
+	} else if (left && ! right) {
+		ix_me = ix_left;
+	}
+
+	if (show_work) {
+
+		std::string strExpr;
+		unparser.Unparse(strExpr, expr);
+
+		if (evaluate_logical) {
+			printf("[%3d] %5s : [%3d] %s [%3d]\n", ix_me, "", ix_left, pop, ix_right);
+			if (chatty) {
+				printf("\t%s\n", strExpr.c_str());
+			}
+		} else {
+			printf("[%3d] %5s : %s\n", ix_me, "", strExpr.c_str());
+		}
+	}
+
+	return ix_me;
+}
+
+// recursively mark subexpressions as irrelevant
+//
+static void MarkIrrelevant(std::vector<AnalSubExpr> & subs, int index, std::string & irr_path, int at_index)
+{
+	if (index >= 0) {
+		subs[index].dont_care = true;
+		subs[index].pruned_by = at_index;
+		//printf("(%d:", index);
+		formatstr_cat(irr_path,"(%d:", index);
+		if (subs[index].ix_left >= 0)  MarkIrrelevant(subs, subs[index].ix_left, irr_path, at_index);
+		if (subs[index].ix_right >= 0) MarkIrrelevant(subs, subs[index].ix_right, irr_path, at_index);
+		if (subs[index].ix_grip >= 0)  MarkIrrelevant(subs, subs[index].ix_grip, irr_path, at_index);
+		formatstr_cat(irr_path,")");
+		//printf(")");
 	}
 }
 
 
-static void
-doRunAnalysis( ClassAd *request, Daemon *schedd )
+static void AnalyzePropagateConstants(std::vector<AnalSubExpr> & subs, bool show_work)
 {
-	printf("%s", doRunAnalysisToBuffer( request, schedd ) );
+
+	// propagate hard true-false
+	for (int ix = 0; ix < (int)subs.size(); ++ix) {
+
+		int ix_effective = -1;
+		int ix_irrelevant = -1;
+
+		const char * pindent = GetIndentPrefix(subs[ix].depth);
+
+		// fixup logic_op entries, propagate hard true/false
+
+		if (subs[ix].logic_op) {
+			// unset, false, true, indeterminate, undefined, error, unset
+			static const char * truthy[] = {"?", "F", "T", "", "u", "e"};
+			int hard_left = 2, hard_right = 2, hard_grip = 2;
+			if (subs[ix].ix_left >= 0) {
+				int il = subs[ix].ix_left;
+				if (subs[il].constant) {
+					hard_left = subs[il].hard_value;
+				}
+			}
+			if (subs[ix].ix_right >= 0) {
+				int ir = subs[ix].ix_right;
+				if (subs[ir].constant) {
+					hard_right = subs[ir].hard_value;
+				}
+			}
+			if (subs[ix].ix_grip >= 0) {
+				int ig = subs[ix].ix_grip;
+				if (subs[ig].constant) {
+					hard_grip = subs[ig].hard_value;
+				}
+			}
+
+			switch (subs[ix].logic_op) {
+				case 1: { // ! 
+					formatstr(subs[ix].label, " ! [%d]%s", subs[ix].ix_left, truthy[hard_left+1]);
+					break;
+				}
+				case 2: { // || 
+					// true || anything is true
+					if (hard_left == 1 || hard_right == 1) {
+						subs[ix].constant = true;
+						subs[ix].hard_value = true;
+						// mark the non-constant irrelevant clause
+						if (hard_left == 1) {
+							subs[ix].ix_effective = ix_effective = subs[ix].ix_left;
+							ix_irrelevant = subs[ix].ix_right;
+						} else if (hard_right == 1) {
+							subs[ix].ix_effective = ix_effective = subs[ix].ix_right;
+							ix_irrelevant = subs[ix].ix_left;
+						}
+					} else
+					// false || false is false
+					if (hard_left == 0 && hard_right == 0) {
+						subs[ix].constant = true;
+						subs[ix].hard_value = false;
+					} else if (hard_left == 0) {
+						subs[ix].ix_effective = ix_effective = subs[ix].ix_right;
+					} else if (hard_right == 0) {
+						subs[ix].ix_effective = ix_effective = subs[ix].ix_left;
+					}
+					formatstr(subs[ix].label, "[%d]%s || [%d]%s", 
+					          subs[ix].ix_left, truthy[hard_left+1], 
+					          subs[ix].ix_right, truthy[hard_right+1]);
+					break;
+				}
+				case 3: { // &&
+					// false && anything is false
+					if (hard_left == 0 || hard_right == 0) {
+						subs[ix].constant = true;
+						subs[ix].hard_value = false;
+						// mark the non-constant irrelevant clause
+						if (hard_left == 0) {
+							subs[ix].ix_effective = ix_effective = subs[ix].ix_left;
+							ix_irrelevant = subs[ix].ix_right;
+						} else if (hard_right == 0) {
+							subs[ix].ix_effective = ix_effective = subs[ix].ix_right;
+							ix_irrelevant = subs[ix].ix_left;
+						}
+					} else
+					// true && true is true
+					if (hard_left == 1 && hard_right == 1) {
+						subs[ix].constant = true;
+						subs[ix].hard_value = true;
+					} else if (hard_left == 1) {
+						subs[ix].ix_effective = ix_effective = subs[ix].ix_right;
+					} else if (hard_right == 1) {
+						subs[ix].ix_effective = ix_effective = subs[ix].ix_left;
+					}
+					formatstr(subs[ix].label, "[%d]%s && [%d]%s", 
+					          subs[ix].ix_left, truthy[hard_left+1], 
+					          subs[ix].ix_right, truthy[hard_right+1]);
+					break;
+				}
+				case 4: { // ?:
+					if (hard_left == 0 || hard_left == 1) {
+						ix_effective = hard_left ? subs[ix].ix_right : subs[ix].ix_grip; 
+						subs[ix].ix_effective = ix_effective;
+						if ((ix_effective >= 0) && subs[ix_effective].constant) {
+							subs[ix].constant = true;
+							subs[ix].hard_value = subs[ix_effective].hard_value;
+						}
+						// mark the irrelevant clause
+						ix_irrelevant = hard_left ? subs[ix].ix_grip : subs[ix].ix_right;
+					}
+					formatstr(subs[ix].label, "[%d]%s ? [%d]%s : [%d]%s", 
+					          subs[ix].ix_left, truthy[hard_left+1], 
+					          subs[ix].ix_right, truthy[hard_right+1], 
+					          subs[ix].ix_grip, truthy[hard_grip+1]);
+					break;
+				}
+			}
+		}
+
+		// now walk effective expressions backward
+		std::string effective_path = "";
+		if (ix_effective >= 0) {
+			if (ix_irrelevant < 0) {
+				if (ix_effective == subs[ix].ix_left)
+					ix_irrelevant = subs[ix].ix_right;
+				if (ix_effective == subs[ix].ix_right)
+					ix_irrelevant = subs[ix].ix_left;
+			}
+			formatstr(effective_path, "%d->%d", ix, ix_effective);
+			while (subs[ix_effective].ix_effective >= 0) {
+				ix_effective = subs[ix_effective].ix_effective;
+				subs[ix].ix_effective = ix_effective;
+				formatstr_cat(effective_path, "->%d", ix_effective);
+			}
+		}
+
+		std::string irr_path = "";
+		if (ix_irrelevant >= 0) {
+			//printf("\tMarkIrrelevant(%d) by %d = ", ix_irrelevant, ix);
+			MarkIrrelevant(subs, ix_irrelevant, irr_path, ix);
+			//printf("\n");
+		}
+
+
+		if (show_work) {
+
+			const char * const_val = "";
+			if (subs[ix].constant)
+				const_val = subs[ix].hard_value ? "true" : "false";
+			if (ix_effective >= 0) {
+				printf("%s %5s\t%s%s\t is effectively %s e<%s>\n", 
+					   StepLbl(ix), const_val, pindent, subs[ix].Label(), subs[ix_effective].Label(), effective_path.c_str());
+			} else {
+				printf("%s %5s\t%s%s\n", StepLbl(ix), const_val, pindent, subs[ix].Label());
+			}
+			if (ix_irrelevant >= 0) {
+				printf("           \tpruning %s\n", irr_path.c_str());
+			}
+		}
+	} // check-if-constant
+}
+
+static const char * PrettyPrintExprTree(classad::ExprTree *tree, std::string & temp_buffer, int indent, int width)
+{
+	classad::ClassAdUnParser unparser;
+	unparser.Unparse(temp_buffer, tree);
+
+	if (indent > width)
+		indent = width*2/3;
+
+	std::string::iterator it, lastAnd, lineStart;
+	it = lastAnd = lineStart = temp_buffer.begin();
+	int indent_at_last_and = indent;
+	int pos = indent;  // we presume that the initial indent has already been printed by the caller.
+
+	char chPrev = 0;
+	while (it != temp_buffer.end()) {
+		if ((*it == '&' || *it == '|') && chPrev == *it) {
+			lastAnd = it + 1;
+			indent_at_last_and = indent;
+		}
+		else if (*it == '(') { indent += 2; }
+		else if (*it == ')') { indent -= 2; }
+		if (pos >= width) {
+			if (lastAnd != lineStart) {
+				temp_buffer.replace(lastAnd, lastAnd + 1, 1, '\n');
+				lineStart = lastAnd + 1;
+				lastAnd = lineStart;
+				pos = 0;
+				if (indent_at_last_and > 0) {
+					size_t cch = distance(temp_buffer.begin(), it);
+					temp_buffer.insert(lineStart, indent_at_last_and, ' ');
+					it = temp_buffer.begin() + cch + indent_at_last_and;
+					pos = indent_at_last_and;
+				}
+				indent_at_last_and = indent;
+			}
+		}
+		chPrev = *it;
+		++it;
+		++pos;
+	}
+	return temp_buffer.c_str();
+}
+
+static void AnalyzeRequirementsForEachTarget(ClassAd *request, ClassAdList & targets, std::string & return_buf, int detail_mask)
+{
+	bool show_work = (detail_mask & 0x100) != 0;
+
+	bool request_is_machine = false;
+	const char * attrConstraint = ATTR_REQUIREMENTS;
+	if (0 == strcmp(request->GetMyTypeName(),STARTD_ADTYPE)) {
+		attrConstraint = ATTR_START;
+		//attrConstraint = ATTR_REQUIREMENTS;
+		request_is_machine = true;
+	}
+
+	classad::ExprTree* exprReq = request->LookupExpr(attrConstraint);
+	if ( ! exprReq)
+		return;
+
+	std::vector<AnalSubExpr> subs;
+	std::string strStep;
+	#define StepLbl(ii) subs[ii].StepLabel(strStep, ii, 3)
+
+	AnalyzeThisSubExpr(exprReq, subs, true, 0);
+
+	if (show_work) {
+		printf("\nEvaluate constants:\n");
+	}
+	// check of each sub-expression has any target references.
+	for (int ix = 0; ix < (int)subs.size(); ++ix) {
+		subs[ix].CheckIfConstant(*request);
+	}
+
+	AnalyzePropagateConstants(subs, show_work);
+
+	//
+	// now print out the strength-reduced expression
+	//
+	if (show_work) {
+		printf("\nReduced boolean expressions:\n");
+		for (int ix = 0; ix < (int)subs.size(); ++ix) {
+			const char * const_val = "";
+			if (subs[ix].constant)
+				const_val = subs[ix].hard_value ? "true" : "false";
+			std::string pruned = "";
+			if (subs[ix].dont_care) {
+				const_val = (subs[ix].constant) ? (subs[ix].hard_value ? "n/aT" : "n/aF") : "n/a";
+				formatstr(pruned, "\tpruned-by:%d", subs[ix].pruned_by);
+			}
+			if (subs[ix].ix_effective < 0) {
+				const char * pindent = GetIndentPrefix(subs[ix].depth);
+				printf("%s %5s\t%s%s%s\n", StepLbl(ix), const_val, pindent, subs[ix].Label(), pruned.c_str());
+			}
+		}
+	}
+
+		// propagate effectives back up the chain. 
+		//
+
+	if (show_work) {
+		printf("\nPropagate effectives:\n");
+	}
+	for (int ix = 0; ix < (int)subs.size(); ++ix) {
+		bool fchanged = false;
+		int jj = subs[ix].ix_left;
+		if ((jj >= 0) && (subs[jj].ix_effective >= 0)) {
+			subs[ix].ix_left = subs[jj].ix_effective;
+			fchanged = true;
+		}
+
+		jj = subs[ix].ix_right;
+		if ((jj >= 0) && (subs[jj].ix_effective >= 0)) {
+			subs[ix].ix_right = subs[jj].ix_effective;
+			fchanged = true;
+		}
+
+		jj = subs[ix].ix_grip;
+		if ((jj >= 0) && (subs[jj].ix_effective >= 0)) {
+			subs[ix].ix_grip = subs[jj].ix_effective;
+			fchanged = true;
+		}
+
+		if (fchanged) {
+			// force the label to be rebuilt.
+			std::string oldlbl = subs[ix].label;
+			if (oldlbl.empty()) oldlbl = "";
+			subs[ix].label.clear();
+			if (show_work) {
+				printf("%s   %s  is effectively  %s\n", StepLbl(ix), oldlbl.c_str(), subs[ix].Label());
+			}
+		}
+	}
+
+	if (show_work) {
+		printf("\nFinal expressions:\n");
+		for (int ix = 0; ix < (int)subs.size(); ++ix) {
+			const char * const_val = "";
+			if (subs[ix].constant)
+				const_val = subs[ix].hard_value ? "true" : "false";
+			if (subs[ix].ix_effective < 0 && ! subs[ix].dont_care) {
+				std::string altlbl;
+				//if ( ! subs[ix].MakeLabel(altlbl)) altlbl = "";
+				const char * pindent = GetIndentPrefix(subs[ix].depth);
+				printf("%s %5s\t%s%s\n", StepLbl(ix), const_val, pindent, subs[ix].Label() /*, altlbl.c_str()*/);
+			}
+		}
+	}
+	//////////////////////////////////////////////////////////////////////////////
+
+	//
+	//
+	// build counts of matching machines, render final output
+	//
+	if (show_work) {
+		if (request_is_machine) {
+			printf("Evaluation against job ads:\n");
+			printf(" Step  Jobs    Condition\n");
+		} else {
+			printf("Evaluation against machine ads:\n");
+			printf(" Step  Slots   Condition\n");
+		}
+	}
+
+	return_buf = request_is_machine ? "        Jobs" : "        Slots";
+	return_buf += "\nStep   Matched  Condition"
+	              "\n-----  -------  ---------\n";
+	std::string linebuf;
+	for (int ix = 0; ix < (int)subs.size(); ++ix) {
+		if (subs[ix].ix_effective >= 0 || subs[ix].dont_care)
+			continue;
+
+		const char * pindent = GetIndentPrefix(subs[ix].depth);
+		const char * const_val = "";
+		if (subs[ix].constant) {
+			const_val = subs[ix].hard_value ? "true" : "false";
+			formatstr(linebuf, "%s %8s  %s%s\n", StepLbl(ix), const_val, pindent, subs[ix].Label());
+			return_buf += linebuf;
+			if (show_work) { printf("%s", linebuf.c_str()); }
+			continue;
+		}
+
+		subs[ix].matches = 0;
+
+		targets.Open();
+		while (ClassAd *target = targets.Next()) {
+
+			classad::Value eval_result;
+			bool bool_val;
+			if (EvalExprTree(subs[ix].tree, request, target, eval_result) && 
+				eval_result.IsBooleanValue(bool_val) && 
+				bool_val) {
+				subs[ix].matches += 1;
+			}
+		}
+		targets.Close();
+
+		formatstr(linebuf, "%s %8d  %s%s", StepLbl(ix), subs[ix].matches, pindent, subs[ix].Label());
+
+		bool append_pretty = false;
+		if (subs[ix].logic_op) {
+			append_pretty = (detail_mask & 3) == 3;
+			if (subs[ix].ix_left == ix-2 && subs[ix].ix_right == ix-1)
+				append_pretty = false;
+			if ((detail_mask & 4) != 0)
+				append_pretty = true;
+		}
+			
+		if (append_pretty) { 
+			std::string treebuf;
+			linebuf += " ( "; 
+			PrettyPrintExprTree(subs[ix].tree, treebuf, linebuf.size(), 100); 
+			linebuf += treebuf; 
+			linebuf += " )";
+		}
+
+		linebuf += "\n";
+		return_buf += linebuf;
+
+		if (show_work) { printf("%s", linebuf.c_str()); }
+	}
+
+	// chase zeros back up the expression tree
+#if 0
+	show_work = (detail_mask & 8); // temporary
+	if (show_work) {
+		printf("\nCurrent Table:\nStep  -> Effec Depth Leaf D/C Matches\n");
+		for (int ix = 0; ix < (int)subs.size(); ++ix) {
+
+			int leaf = subs[ix].logic_op == 0;
+			printf("[%3d] -> [%3d] %5d %4d %3d %7d %s\n", ix, subs[ix].ix_effective, subs[ix].depth, leaf, subs[ix].dont_care, subs[ix].matches, subs[ix].Label());
+		}
+		printf("\n");
+		printf("\nChase Zeros:\nStep  -> Effec Depth Leaf Matches\n");
+	}
+	for (int ix = 0; ix < (int)subs.size(); ++ix) {
+		if (subs[ix].ix_effective >= 0 || subs[ix].dont_care)
+			continue;
+
+		int leaf = subs[ix].logic_op == 0;
+		if (leaf && subs[ix].matches == 0) {
+			if (show_work) {
+				printf("[%3d] -> [%3d] %5d %4d %7d %s\n", ix, subs[ix].ix_effective, subs[ix].depth, leaf, subs[ix].matches, subs[ix].Label());
+			}
+			for (int jj = ix+1; jj < (int)subs.size(); ++jj) {
+				if (subs[jj].matches != 0)
+					continue;
+				if (subs[jj].reported)
+					continue;
+				if ((subs[jj].ix_effective == ix) || subs[jj].ix_left == ix || subs[jj].ix_right == ix || subs[jj].ix_grip == ix) {
+					const char * pszop = "  \0 !\0||\0&&\0?:\0  \0"+subs[jj].logic_op*3;
+					printf("[%3d] -> [%3d] %5d %4s %7d %s\n", jj, subs[jj].ix_effective, subs[jj].depth, pszop, subs[jj].matches, subs[jj].Label());
+					subs[jj].reported = true;
+				}
+			}
+		}
+	}
+	if (show_work) {
+		printf("\n");
+	}
+#endif
+
+}
+
+#if 0 // experimental code
+
+int EvalThisSubExpr(int & index, classad::ExprTree* expr, ClassAd *request, ClassAd *offer, std::vector<ExprTree*> & clauses, bool must_store)
+{
+	++index;
+
+	classad::ExprTree::NodeKind kind = expr->GetKind( );
+	classad::ClassAdUnParser unp;
+
+	bool evaluate = true;
+	bool evaluate_logical = false;
+	bool push_it = must_store;
+	bool chatty = false;
+	const char * pop = "??";
+	int ix_me = -1, ix_left = -1, ix_right = -1, ix_grip = -1;
+
+	classad::Operation::OpKind op = classad::Operation::__NO_OP__;
+	classad::ExprTree *left=NULL, *right=NULL, *gripping=NULL;
+	switch(kind) {
+		case classad::ExprTree::LITERAL_NODE: {
+			if (chatty) {
+				classad::Value val;
+				classad::Value::NumberFactor factor;
+				((classad::Literal*)expr)->GetComponents(val, factor);
+				std::string str;
+				unp.UnparseAux(str, val, factor);
+				printf("     %d:const : %s\n", kind, str.c_str());
+			}
+			evaluate = false;
+			break;
+		}
+
+		case classad::ExprTree::ATTRREF_NODE: {
+			bool	absolute;
+			std::string attrref;
+			((classad::AttributeReference*)expr)->GetComponents(left, attrref, absolute);
+			if (chatty) {
+				printf("     %d:attr  : %s %s at %p\n", kind, absolute ? "abs" : "ref", attrref.c_str(), left);
+			}
+			if (absolute) {
+				left = NULL;
+			}
+			evaluate = false;
+			break;
+		}
+
+		case classad::ExprTree::OP_NODE: {
+			((classad::Operation*)expr)->GetComponents(op, left, right, gripping);
+			pop = "??";
+			if (op <= classad::Operation::__LAST_OP__) 
+				pop = unp.opString[op];
+			if (chatty) {
+				printf("     %d:op    : %2d:%s %p %p %p\n", kind, op, pop, left, right, gripping);
+			}
+			if (op >= classad::Operation::__COMPARISON_START__ && op <= classad::Operation::__COMPARISON_END__) {
+				evaluate = true;
+				evaluate_logical = false;
+				push_it = true;
+			} else if (op >= classad::Operation::__LOGIC_START__ && op <= classad::Operation::__LOGIC_END__) {
+				evaluate = true;
+				evaluate_logical = true;
+				push_it = true;
+			} else {
+				evaluate = false;
+			}
+			break;
+		}
+
+		case classad::ExprTree::FN_CALL_NODE: {
+			std::string strName;
+			std::vector<ExprTree*> args;
+			((classad::FunctionCall*)expr)->GetComponents(strName, args);
+			if (chatty) {
+				printf("     %d:call  : %s() %d args\n", kind, strName.c_str(), args.size());
+			}
+			break;
+		}
+
+		case classad::ExprTree::CLASSAD_NODE: {
+			vector< std::pair<string, classad::ExprTree*> > attrs;
+			((classad::ClassAd*)expr)->GetComponents(attrs);
+			if (chatty) {
+				printf("     %d:ad    : %d attrs\n", kind, attrs.size());
+			}
+			//clauses.push_back(expr);
+			break;
+		}
+
+		case classad::ExprTree::EXPR_LIST_NODE: {
+			vector<classad::ExprTree*> exprs;
+			((classad::ExprList*)expr)->GetComponents(exprs);
+			if (chatty) {
+				printf("     %d:list  : %d items\n", kind, exprs.size());
+			}
+			//clauses.push_back(expr);
+			break;
+		}
+		
+		case classad::ExprTree::EXPR_ENVELOPE: {
+			// recurse b/c we indirect for this element.
+			left = ((classad::CachedExprEnvelope*)expr)->get();
+			if (chatty) {
+				printf("     %d:env  :     %p\n", kind, left);
+			}
+			break;
+		}
+	}
+
+	if (left) ix_left = EvalThisSubExpr(index, left, request, offer, clauses, evaluate_logical);
+	if (right) ix_right = EvalThisSubExpr(index, right, request, offer, clauses, evaluate_logical);
+	if (gripping) ix_grip = EvalThisSubExpr(index, gripping, request, offer, clauses, evaluate_logical);
+
+	if (push_it) {
+		if (left && ! right && ix_left >= 0) {
+			ix_me = ix_left;
+		} else {
+			ix_me = (int)clauses.size();
+			clauses.push_back(expr);
+			// TJ: for now, so I can see what's happening.
+			evaluate = true;
+		}
+	} else if (left && ! right) {
+		ix_me = ix_left;
+	}
+
+	if (evaluate) {
+
+		classad::Value eval_result;
+		bool           bool_val;
+		bool matches = false;
+		if (EvalExprTree(expr, request, offer, eval_result) && eval_result.IsBooleanValue(bool_val) && bool_val) {
+			matches = true;
+		}
+
+		std::string strExpr;
+		unp.Unparse(strExpr, expr);
+		if (evaluate_logical) {
+			//if (ix_left < 0)  { ix_left = (int)clauses.size(); clauses.push_back(left); }
+			//if (ix_right < 0) { ix_right = (int)clauses.size(); clauses.push_back(right); }
+			printf("[%3d] %5s : [%3d] %s [%3d]\n", ix_me, matches ? "1" : "0", 
+				   ix_left, pop, ix_right);
+			if (chatty) {
+				printf("\t%s\n", strExpr.c_str());
+			}
+		} else {
+			printf("[%3d] %5s : %s\n", ix_me, matches ? "1" : "0", strExpr.c_str());
+		}
+	}
+
+	return ix_me;
+}
+
+static void EvalRequirementsExpr(ClassAd *request, ClassAdList & offers, std::string & return_buf)
+{
+	classad::ExprTree* exprReq = request->LookupExpr(ATTR_REQUIREMENTS);
+	if (exprReq) {
+
+		std::vector<ExprTree*> clauses;
+
+		offers.Open();
+		while (ClassAd *offer = offers.Next()) {
+			int counter = 0;
+			EvalThisSubExpr(counter, exprReq, request, offer, clauses, true);
+
+			static bool there_can_be_only_one = true;
+			if (there_can_be_only_one)
+				break; // for now only do the first offer.
+		}
+		offers.Close();
+	}
+}
+
+#endif // experimental code above
+
+
+static void AddReferencedAttribsToBuffer(
+	ClassAd * request,
+	StringList & trefs, // out, returns target refs
+	const char * pindent,
+	std::string & return_buf)
+{
+	StringList refs;
+	trefs.clearAll();
+
+	request->GetExprReferences(ATTR_REQUIREMENTS,refs,trefs);
+	if (refs.isEmpty() && trefs.isEmpty())
+		return;
+
+	refs.rewind();
+
+	if ( ! pindent) pindent = "";
+
+	AttrListPrintMask pm;
+	pm.SetAutoSep(NULL, "", "\n", "\n");
+	while(const char *attr = refs.next()) {
+		std::string label;
+		formatstr(label, "%s%s = %%V", pindent, attr);
+		if (0 == strcmp(attr, ATTR_REQUIREMENTS))
+			continue;
+		pm.registerFormat(label.c_str(), 0, FormatOptionNoTruncate, attr);
+	}
+	if ( ! pm.IsEmpty()) {
+		char * temp = pm.display(request);
+		if (temp) {
+			return_buf += temp;
+			delete[] temp;
+		}
+	}
+}
+
+static void AddTargetReferencedAttribsToBuffer(
+	StringList & trefs, // out, returns target refs
+	ClassAd * request,
+	ClassAd * target,
+	const char * pindent,
+	std::string & return_buf)
+{
+	trefs.rewind();
+
+	AttrListPrintMask pm;
+	pm.SetAutoSep(NULL, "", "\n", "\n");
+	while(const char *attr = trefs.next()) {
+		std::string label;
+		formatstr(label, "%sTARGET.%s = %%V", pindent, attr);
+		if (target->LookupExpr(attr)) {
+			pm.registerFormat(label.c_str(), 0, FormatOptionNoTruncate, attr);
+		}
+	}
+	if (pm.IsEmpty())
+		return;
+
+	char * temp = pm.display(request, target);
+	if (temp) {
+		//return_buf += "\n";
+		//return_buf += pindent;
+		std::string name;
+		if ( ! target->LookupString(ATTR_NAME, name))
+			name = "Target";
+		return_buf += name;
+		return_buf += " has the following attributes:\n\n";
+		return_buf += temp;
+		delete[] temp;
+	}
+}
+
+static void
+doJobRunAnalysis( ClassAd *request, Daemon *schedd )
+{
+	printf("%s", doJobRunAnalysisToBuffer( request, schedd ) );
+}
+
+static void append_to_fail_list(std::string & list, const char * entry, size_t limit)
+{
+	if ( ! limit || list.size() < limit) {
+		if (list.size() > 1) { list += ", "; }
+		list += entry;
+	} else if (list.size() > limit) {
+		if (limit > 50) {
+			list.erase(limit-4);
+			list += "...";
+		} else {
+			list.erase(limit);
+		}
+	}
 }
 
 static const char *
-doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
+doJobRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 {
 	char	owner[128];
-	char	remoteUser[128];
+	string	remoteUser;
 	char	buffer[128];
 	int		index;
 	ClassAd	*offer;
@@ -3430,6 +4748,7 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 	int     fOffline        = 0;
 	int		available		= 0;
 	int		totalMachines	= 0;
+	bool	forceReqAnalyze = (analyze_detail_level & 4);
 
 	return_buff[0]='\0';
 
@@ -3443,7 +4762,7 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 		snprintf( return_buff, sizeof(return_buff), "%s", buf.Value() );
 	}
 
-	if( !request->LookupString( ATTR_OWNER , owner ) ) return "Nothing here.\n";
+	if( !request->LookupString( ATTR_OWNER , owner, sizeof(owner) ) ) return "Nothing here.\n";
 	if( !request->LookupInteger( ATTR_NICE_USER , niceUser ) ) niceUser = 0;
 
 	if( ( index = findSubmittor( fixSubmittorName( owner, niceUser ) ) ) < 0 ) 
@@ -3465,7 +4784,8 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 		sprintf( return_buff,
 			"---\n%03d.%03d:  Request is being serviced\n\n", cluster, 
 			proc );
-		return return_buff;
+		if ( ! forceReqAnalyze)
+			return return_buff;
 	}
 	if( jobState == HELD ) {
 		sprintf( return_buff,
@@ -3477,25 +4797,29 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 			size_t offset = strlen(return_buff);
 			snprintf( return_buff + offset, sizeof(return_buff)-offset, "Hold reason: %s\n\n", hold_reason.Value() );
 		}
-		return return_buff;
+		if ( ! forceReqAnalyze)
+			return return_buff;
 	}
 	if( jobState == REMOVED ) {
 		sprintf( return_buff,
 			"---\n%03d.%03d:  Request is removed.\n\n", cluster, 
 			proc );
-		return return_buff;
+		if ( ! forceReqAnalyze)
+			return return_buff;
 	}
 	if( jobState == COMPLETED ) {
 		sprintf( return_buff,
 			"---\n%03d.%03d:  Request is completed.\n\n", cluster, 
 			proc );
-		return return_buff;
+		if ( ! forceReqAnalyze)
+			return return_buff;
 	}
 	if ( jobMatched ) {
 		sprintf( return_buff,
 			"---\n%03d.%03d:  Request has been matched.\n\n", cluster, 
 			proc );
-		return return_buff;
+		if ( ! forceReqAnalyze)
+			return return_buff;
 	}
 
 	startdAds.Open();
@@ -3509,9 +4833,8 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 
 	while( ( offer = startdAds.Next() ) ) {
 		// 0.  info from machine
-		remoteUser[0] = '\0';
 		totalMachines++;
-		offer->LookupString( ATTR_NAME , buffer );
+		offer->LookupString( ATTR_NAME , buffer, sizeof(buffer) );
 		if( verbose ) sprintf( return_buff, "%-15.15s ", buffer );
 
 		// 1. Request satisfied? 
@@ -3519,10 +4842,7 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 			if( verbose ) sprintf( return_buff,
 				"%sFailed request constraint\n", return_buff );
 			fReqConstraint++;
-			if (fReqConstraint != 1) {
-				fReqConstraintStr += ", ";
-			} 
-			fReqConstraintStr += buffer;
+			append_to_fail_list(fReqConstraintStr, buffer, 1000);
 			continue;
 		} 
 
@@ -3530,20 +4850,14 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 		if ( !IsAHalfMatch( offer, request ) ) {
 			if( verbose ) strcat( return_buff, "Failed offer constraint\n");
 			fOffConstraint++;
-			if (fOffConstraint != 1) {
-				fOffConstraintStr += ", ";
-			}
-			fOffConstraintStr += buffer;
+			append_to_fail_list(fOffConstraintStr, buffer, 1000);
 			continue;
 		}	
 
 		int offline = 0;
 		if( offer->EvalBool( ATTR_OFFLINE, NULL, offline ) && offline ) {
 			fOffline++;
-			if (fOffline != 1) {
-				fOfflineStr += ", ";
-			}
-			fOfflineStr += buffer;
+			append_to_fail_list(fOfflineStr, buffer, 1000);
 			continue;
 		}
 
@@ -3559,11 +4873,8 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 			} else {
 				// no remote user, but std rank condition failed
 			  if (last_rej_match_time != 0) {
-  				fRankCond++;
-				if (fRankCond != 1) {
-					fRankCondStr += ", ";
-				}
-				fRankCondStr += buffer;
+				fRankCond++;
+				append_to_fail_list(fRankCondStr, buffer, 1000);
 				if( verbose ) {
 					sprintf( return_buff,
 						"%sFailed rank condition: MY.Rank > MY.CurrentRank\n",
@@ -3574,7 +4885,8 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 			    sprintf( return_buff,
 				     "---\n%03d.%03d:  Request has not yet been considered by the matchmaker.\n\n", cluster,
 				     proc );
-			    return return_buff;
+				if ( ! forceReqAnalyze)
+					return return_buff;
 			  }
 			}
 		}
@@ -3601,16 +4913,13 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 						eval_result.IsBooleanValue(val) && !val ) 
 					{
 						fPreemptReqTest++;
-						if (fPreemptReqTest != 1) {
-							fPreemptReqTestStr += ", ";
-						}
-						fPreemptReqTestStr += buffer;
+						append_to_fail_list(fPreemptReqTestStr, buffer, 1000);
 						if( verbose ) {
 							sprintf( return_buff,
 									"%sCan preempt %s, but failed "
 									"PREEMPTION_REQUIREMENTS test\n",
 									return_buff,
-									remoteUser);
+									 remoteUser.c_str());
 						}
 						continue;
 					} else {
@@ -3618,7 +4927,7 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 						if( verbose ) {
 							sprintf( return_buff,
 								"%sAvailable (can preempt %s)\n",
-								return_buff, remoteUser);
+									 return_buff, remoteUser.c_str());
 						}
 						available++;
 					}
@@ -3634,21 +4943,19 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 				    sprintf( return_buff,
 					     "---\n%03d.%03d:  Request has not yet been considered by the matchmaker.\n\n", cluster,
 					     proc );
-				    return return_buff;
+					if ( ! forceReqAnalyze)
+						return return_buff;
 				  }
 				}
 			} 
 		} else {
 			// failed 4
 			fPreemptPrioCond++;
-			if (fPreemptPrioCond != 1) {
-				fPreemptPrioStr += ", ";
-			}
-			fPreemptPrioStr += buffer;
+			append_to_fail_list(fPreemptPrioStr, buffer, 1000);
 			if( verbose ) {
 				sprintf( return_buff,
 					"%sInsufficient priority to preempt %s\n" , 
-					return_buff, remoteUser );
+						 return_buff, remoteUser.c_str() );
 			}
 			continue;
 		}
@@ -3669,7 +4976,7 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 		 "  %5d match but are serving users with a better priority in the pool%s %s\n"
 		 "  %5d match but reject the job for unknown reasons %s\n"
 		 "  %5d match but will not currently preempt their existing job %s\n"
-         "  %5d match but are currently offline %s\n"
+		 "  %5d match but are currently offline %s\n"
 		 "  %5d are available to run your job\n",
 		return_buff, cluster, proc, totalMachines,
 		fReqConstraint, verbose ? fReqConstraintStr.c_str() : "",
@@ -3724,17 +5031,69 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
         }
 	}
 
-    if (better_analyze) {
-        std::string buffer_string = "";
-        char ana_buffer[SHORT_BUFFER_SIZE];
-        
-        if( fReqConstraint > 0 ) {
-            analyzer.AnalyzeJobReqToBuffer( request, startdAds, buffer_string );
-            strncpy( ana_buffer, buffer_string.c_str( ), SHORT_BUFFER_SIZE );
-			ana_buffer[SHORT_BUFFER_SIZE-1] = '\0';
-            strcat( return_buff, ana_buffer );
-        }
-    }
+	if (better_analyze && ((fReqConstraint > 0) || analyze_detail_level > 0)) {
+
+		// first analyze the Requirements expression against the startd ads.
+		//
+		std::string subexpr_buf = "";
+		std::string pretty_req = "";
+		analyzer.AnalyzeJobReqToBuffer( request, startdAds, subexpr_buf, pretty_req );
+		if ((int)subexpr_buf.size() > SHORT_BUFFER_SIZE)
+		   subexpr_buf.erase(SHORT_BUFFER_SIZE, string::npos);
+
+		if (0 == analyze_detail_level) {
+			strcat(return_buff, pretty_req.c_str());
+		}
+		pretty_req = "";
+
+		if (analyze_detail_level > 0) {
+			classad::ExprTree* tree = request->LookupExpr(ATTR_REQUIREMENTS);
+			if (tree) {
+				int console_width = widescreen ? getConsoleWindowSize() : 80;
+				PrettyPrintExprTree(tree, pretty_req, 4, console_width-1);
+				strcat(return_buff, "\nThe Requirements expression for your job is:\n\n    ");
+				strcat(return_buff, pretty_req.c_str());
+				strcat(return_buff, "\n\n");
+				pretty_req = "";
+			}
+		}
+
+		// then capture the values of MY attributes refereced by the expression
+		// also capture the value of TARGET attributes if there is only a single ad.
+		if (analyze_detail_level > 0) {
+			std::string attrib_values = "";
+			attrib_values = "Your job defines the following attributes:\n\n";
+			StringList trefs;
+			AddReferencedAttribsToBuffer(request, trefs, "    ", attrib_values);
+			strcat(return_buff, attrib_values.c_str());
+			attrib_values = "";
+
+			if (single_machine || startdAds.Length() == 1) { 
+				startdAds.Open(); 
+				while (ClassAd * ptarget = startdAds.Next()) {
+					attrib_values = "\n";
+					AddTargetReferencedAttribsToBuffer(trefs, request, ptarget, "    ", attrib_values);
+					strcat(return_buff, attrib_values.c_str());
+				}
+				startdAds.Close();
+			}
+			strcat(return_buff, "\nThe Requirements expression for your job has these conditions:\n\n");
+		}
+
+		// write analysis of the requirements expression.
+
+		// TJ's experimental analysis (now with more anal)
+		if (analyze_detail_level > 1) {
+			std::string subexpr_detail;
+			AnalyzeRequirementsForEachTarget(request, startdAds, subexpr_detail, analyze_detail_level);
+			strcat(return_buff, subexpr_detail.c_str());
+			strcat(return_buff, "\nSuggestions:\n\n");
+		}
+
+		// write the analyzers analysis to the buffer
+		//
+		strcat(return_buff, subexpr_buf.c_str());
+	}
 
 	if( fOffConstraint == totalMachines ) {
         strcat(return_buff, "\nWARNING:  Be advised:\n   Request did not match any resource's constraints\n");
@@ -3812,9 +5171,101 @@ doRunAnalysisToBuffer( ClassAd *request, Daemon *schedd )
 	return return_buff;
 }
 
+static void
+doSlotRunAnalysis(ClassAd *slot, ClassAdList & jobs, Daemon *schedd, int console_width)
+{
+	printf("%s", doSlotRunAnalysisToBuffer(slot, jobs, schedd, console_width));
+}
+
+static const char *
+doSlotRunAnalysisToBuffer(ClassAd *slot, ClassAdList & jobs, Daemon * /*schedd*/, int console_width)
+{
+	return_buff[0] = 0;
+
+#if !defined(WANT_OLD_CLASSADS)
+	slot->AddTargetRefs(TargetJobAttrs);
+#endif
+
+	std::string slotname = "";
+	slot->LookupString(ATTR_NAME , slotname);
+
+	int offline = 0;
+	if (slot->EvalBool(ATTR_OFFLINE, NULL, offline) && offline) {
+		sprintf(return_buff, "%-24.24s  is offline\n", slotname.c_str());
+		return return_buff;
+	}
+
+	jobs.Open();
+
+	int totalJobs = 0;
+	int cReqConstraint = 0;
+	int cOffConstraint = 0;
+
+	while(ClassAd *job = jobs.Next()) {
+		// 0.  info from job
+		++totalJobs;
+
+		#if !defined(WANT_OLD_CLASSADS)
+		job->AddTargetRefs(TargetMachineAttrs);
+		#endif
+
+		// 1. Request satisfied? 
+		if (IsAHalfMatch(job, slot)) {
+			cReqConstraint++;
+			continue;
+		}
+
+		// 2. Offer satisfied? 
+		if (IsAHalfMatch(slot, job)) {
+			cOffConstraint++;
+			continue;
+		}
+	}
+
+	if (analyze_detail_level > 0) {
+		classad::ExprTree* tree = slot->LookupExpr(ATTR_START);
+		if (tree) {
+			static std::string prev_pretty_req;
+			std::string pretty_req = "";
+			PrettyPrintExprTree(tree, pretty_req, 4, console_width-1);
+
+			if (prev_pretty_req.empty() || prev_pretty_req != pretty_req) {
+				strcat(return_buff, "\nThe START expression for ");
+				strcat(return_buff, slotname.c_str());
+				strcat(return_buff, " is \n\n    ");
+				strcat(return_buff, pretty_req.c_str());
+				strcat(return_buff, "\n\n");
+				prev_pretty_req = pretty_req;
+			} else {
+				formatstr(pretty_req, "\nRequirements for %d out of %d jobs matches %s\nthe effective START expression matches:\n", cReqConstraint, totalJobs, slotname.c_str());
+				strcat(return_buff, pretty_req.c_str());
+			}
+			pretty_req = "";
+		}
+
+		std::string subexpr_detail;
+		AnalyzeRequirementsForEachTarget(slot, jobs, subexpr_detail, analyze_detail_level);
+		strcat(return_buff, subexpr_detail.c_str());
+
+		formatstr(subexpr_detail, "%-5.5s %8d\n", "[ALL]", cOffConstraint);
+		strcat(return_buff, subexpr_detail.c_str());
+
+	} else {
+		sprintf(return_buff, "%-24.24s %12d %12d %9d\n", slotname.c_str(), cReqConstraint, cOffConstraint, totalJobs);
+	}
+
+	if (better_analyze) {
+		std::string ana_buffer = "";
+		strcat(return_buff, ana_buffer.c_str());
+	}
+
+	jobs.Close();
+
+	return return_buff;
+}
 
 static int
-findSubmittor( char *name ) 
+findSubmittor( const char *name ) 
 {
 	MyString 	sub(name);
 	int			last = prioTable.getlast();
@@ -3865,36 +5316,86 @@ fixSubmittorName( char *name, int niceUser )
 	return NULL;
 }
 
-static bool read_classad_file(const char *filename, ClassAdList &classads)
-{
-    int is_eof, is_error, is_empty;
-    bool success;
-    ClassAd *classad;
-    FILE *file;
 
-    file = safe_fopen_wrapper_follow(filename, "r");
-    if (file == NULL) {
-        fprintf(stderr, "Can't open file of job ads: %s\n", filename);
+static bool read_classad_file(const char *filename, ClassAdList &classads, ClassAdFileParseHelper* pparse_help, const char * constr)
+{
+	bool success = false;
+
+	FILE* file = safe_fopen_wrapper_follow(filename, "r");
+	if (file == NULL) {
+		fprintf(stderr, "Can't open file of job ads: %s\n", filename);
 		return false;
-    } else {
-        do {
-            classad = new ClassAd(file, "\n", is_eof, is_error, is_empty);
-            if (!is_error && !is_empty) {
-                classads.Insert(classad);
-            }
-			else {
+	} else {
+#if 1
+		CondorClassAdFileParseHelper generic_helper("\n");
+		if ( ! pparse_help)
+			pparse_help = &generic_helper;
+
+		for (;;) {
+			ClassAd* classad = new ClassAd();
+
+			int error;
+			bool is_eof;
+			int cAttrs = classad->InsertFromFile(file, is_eof, error, pparse_help);
+
+			bool include_classad = cAttrs > 0 && error >= 0;
+			if (include_classad && constr) {
+				classad::Value result;
+				if (classad->EvaluateExpr(constr,result)) {
+					if ( ! result.IsBooleanValueEquiv(include_classad)) {
+						include_classad = false;
+					}
+				}
+			}
+			if (include_classad) {
+				classads.Insert(classad);
+			} else {
 				delete classad;
 			}
-        } while (!is_eof && !is_error);
-        if (is_error) {
-            success = false;
-        } else {
-            success = true;
-        }
+
+			if (is_eof) {
+				success = true;
+				break;
+			}
+			if (error < 0) {
+				success = false;
+				break;
+			}
+		}
+#else
+		int is_eof, is_error, is_empty;
+		int cEmpty = 0;
+		do {
+			classad = new ClassAd(file, "\n", is_eof, is_error, is_empty);
+			include_classad = !is_error && !is_empty;
+			if (constr) {
+				classad::Value result;
+				if (classad->EvaluateExpr(constr,result)) {
+					if ( ! result.IsBooleanValueEquiv(include_classad)) {
+						include_classad=false;
+					}
+				}
+			}
+			if (include_classad) {
+				classads.Insert(classad);
+			} else {
+				delete classad;
+			}
+
+		} while (!is_eof && !is_error);
+
+		if (is_error) {
+			success = false;
+		} else {
+			success = true;
+		}
+#endif
+
 		fclose(file);
-    }
-    return success;
+	}
+	return success;
 }
+
 
 #ifdef HAVE_EXT_POSTGRESQL
 
@@ -4034,11 +5535,11 @@ void warnScheddLimits(Daemon *schedd,ClassAd *job,MyString &result_buf) {
 		bool exhausted = false;
 		ad->LookupBool("SwapSpaceExhausted", exhausted);
 		if (exhausted) {
-			result_buf.sprintf_cat("WARNING -- this schedd is not running jobs because it believes that doing so\n");
-			result_buf.sprintf_cat("           would exhaust swap space and cause thrashing.\n");
-			result_buf.sprintf_cat("           Set RESERVED_SWAP to 0 to tell the scheduler to skip this check\n");
-			result_buf.sprintf_cat("           Or add more swap space.\n");
-			result_buf.sprintf_cat("           The analysis code does not take this into consideration\n");
+			result_buf.formatstr_cat("WARNING -- this schedd is not running jobs because it believes that doing so\n");
+			result_buf.formatstr_cat("           would exhaust swap space and cause thrashing.\n");
+			result_buf.formatstr_cat("           Set RESERVED_SWAP to 0 to tell the scheduler to skip this check\n");
+			result_buf.formatstr_cat("           Or add more swap space.\n");
+			result_buf.formatstr_cat("           The analysis code does not take this into consideration\n");
 		}
 
 		int maxJobsRunning 	= -1;
@@ -4049,9 +5550,9 @@ void warnScheddLimits(Daemon *schedd,ClassAd *job,MyString &result_buf) {
 
 		if ((maxJobsRunning > -1) && (totalRunningJobs > -1) && 
 			(maxJobsRunning == totalRunningJobs)) { 
-			result_buf.sprintf_cat("WARNING -- this schedd has hit the MAX_JOBS_RUNNING limit of %d\n", maxJobsRunning);
-			result_buf.sprintf_cat("       to run more concurrent jobs, raise this limit in the config file\n");
-			result_buf.sprintf_cat("       NOTE: the matchmaking analysis does not take the limit into consideration\n");
+			result_buf.formatstr_cat("WARNING -- this schedd has hit the MAX_JOBS_RUNNING limit of %d\n", maxJobsRunning);
+			result_buf.formatstr_cat("       to run more concurrent jobs, raise this limit in the config file\n");
+			result_buf.formatstr_cat("       NOTE: the matchmaking analysis does not take the limit into consideration\n");
 		}
 
 		int status = -1;
@@ -4083,10 +5584,10 @@ void warnScheddLimits(Daemon *schedd,ClassAd *job,MyString &result_buf) {
 
 				int req = 0;
 				if( !ad->EvalBool(schedd_requirements_attr,job,req) ) {
-					result_buf.sprintf_cat("WARNING -- this schedd's policy %s failed to evalute for this job.\n",schedd_requirements_expr.Value());
+					result_buf.formatstr_cat("WARNING -- this schedd's policy %s failed to evalute for this job.\n",schedd_requirements_expr.Value());
 				}
 				else if( !req ) {
-					result_buf.sprintf_cat("WARNING -- this schedd's policy %s evalutes to false for this job.\n",schedd_requirements_expr.Value());
+					result_buf.formatstr_cat("WARNING -- this schedd's policy %s evalutes to false for this job.\n",schedd_requirements_expr.Value());
 				}
 			}
 		}

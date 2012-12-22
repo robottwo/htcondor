@@ -3,14 +3,14 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \index{concurrency limits}
 
-Condor's implementation of the mechanism called \Term{concurrency limits}
+HTCondor's implementation of the mechanism called \Term{concurrency limits}
 allows an administrator to define and set integer limits on
 consumable resources.
 These limits are utilized during matchmaking, preventing matches when
 the resources are allocated.
 Typical uses of this mechanism will include
 the management of software licenses, database connections,
-and any other consumable resource external to Condor.
+and any other consumable resource external to HTCondor.
 
 Use of the concurrency limits mechanism requires configuration variables
 to set distinct limits,
@@ -81,25 +81,27 @@ concurrency_limits = y,XSW:3,Z
 \end{verbatim}
 
 Concurrency limit defaults may also be declared for named groups, which
-allow default limits to be ``scoped'' by a group name, as in this example:
+allow default limits to be scoped by a group name, as in this example:
 \begin{verbatim}
 CONCURRENCY_LIMIT_DEFAULT = 5
 CONCURRENCY_LIMIT_DEFAULT_LARGE = 100
 CONCURRENCY_LIMIT_DEFAULT_SMALL = 25
 \end{verbatim}
 
-With the above configuration, a concurrency limit named ``large.swlicense'' 
-will receive a default limit of 100.  A concurrency limit named
-``large.dbsession'' will also receive a default limit of 100.  A limit named
-``small.dbsession'' will receive a default limit of 25.  A concurrency limit 
-``other.license'' will receive the global default limit of 5, as there is
-no declaration for \MacroNI{CONCURRENCY\_LIMIT\_DEFAULT\_OTHER}.
+With the above configuration, a concurrency limit named 
+\Expr{"large.swlicense"} will receive a default limit of 100.  
+A concurrency limit named \Expr{"large.dbsession"} will also 
+receive a default limit of 100.  
+A limit named \Expr{"small.dbsession"} will receive a default limit of 25.
+A concurrency limit named \Expr{"other.license"} will receive the 
+global default limit of 5, as there is
+no value set for  for \MacroNI{CONCURRENCY\_LIMIT\_DEFAULT\_OTHER}.
 
 Note that the maximum for any given limit,
 as specified with the configuration variable \MacroNI{<*>\_LIMIT},
-is as strictly enforced \Bold{as possible}.
+is as strictly enforced \emph{as possible}.
 In the presence of preemption and dropped updates from
 the \Condor{startd} daemon to the \Condor{collector} daemon,
 it is possible for the limit to be exceeded.
-Condor will never kill a job to free up a limit,
+HTCondor will never kill a job to free up a limit,
 including the case where a limit maximum is exceeded. 

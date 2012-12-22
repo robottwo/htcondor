@@ -70,6 +70,7 @@
 #define ATTR_CKPT_SERVER  "CkptServer"
 #define ATTR_CLAIM_STARTD  "ClaimStartd"
 #define ATTR_COD_CLAIMS  "CODClaims"
+#define ATTR_COLLECTOR_HOST  "CollectorHost"
 #define ATTR_COMMAND  "Command"
 #define ATTR_COMPRESS_FILES  "CompressFiles"
 #define ATTR_REQUESTED_CAPACITY  "RequestedCapacity"
@@ -248,6 +249,7 @@
 #define ATTR_PROPORTIONAL_SET_SIZE  "ProportionalSetSizeKb"
 #define ATTR_INTERACTIVE  "Interactive"
 #define ATTR_IS_DAEMON_CORE  "IsDaemonCore"
+#define ATTR_IS_LOCAL_STARTD  "IsLocalStartd"
 #define ATTR_IS_OWNER  "IsOwner"
 #define ATTR_IS_QUEUE_SUPER_USER  "IsQueueSuperUser"
 #define ATTR_IS_WAKE_SUPPORTED  "IsWakeOnLanSupported"
@@ -264,6 +266,7 @@
 #define ATTR_JOB_ARGUMENTS1  "Args"
 #define ATTR_JOB_ARGUMENTS2  "Arguments"
 #define ATTR_JOB_CMD  "Cmd"
+#define ATTR_JOB_DESCRIPTION "JobDescription"
 #define ATTR_STACK_SIZE  "StackSize"
 #define ATTR_JOB_CMD_HASH  "CmdHash"
 #define ATTR_JOB_CMD_MD5  "CmdMD5"
@@ -318,6 +321,8 @@
 #define ATTR_POST_JOB_PRIO1  "PostJobPrio1"
 #define ATTR_POST_JOB_PRIO2  "PostJobPrio2"
 #define ATTR_JOB_PRIO  "JobPrio"
+#define ATTR_JOB_PRIO_ARRAY "JobPrioArray" // optionally in submitter ad
+#define ATTR_JOB_PRIO_ARRAY_OVERFLOW "JobPrioArrayOverflow"
 #define ATTR_JOB_COMMITTED_TIME  "CommittedTime"
 #define ATTR_JOB_LANGUAGE  "JobLanguage"
 #define ATTR_JOB_LAST_START_DATE  "JobLastStartDate"
@@ -852,6 +857,10 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_EC2_VPC_IP  "EC2VpcIp"
 #define ATTR_EC2_TAG_NAMES  "EC2TagNames"
 #define ATTR_EC2_TAG_PREFIX  "EC2Tag"
+#define ATTR_EC2_SPOT_PRICE  "EC2SpotPrice"
+#define ATTR_EC2_SPOT_REQUEST_ID  "EC2SpotRequestID"
+#define ATTR_EC2_STATUS_REASON_CODE  "EC2StatusReasonCode"
+
 //************* End of changes for EC2 Jobs *****************//
 
 #define ATTR_REQUEST_CPUS  "RequestCpus"

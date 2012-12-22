@@ -28,6 +28,8 @@
 #include "condor_holdcodes.h"
 #include "startd_bench_job.h"
 
+#include "slot_builder.h"
+
 #if defined(WANT_CONTRIB) && defined(WITH_MANAGEMENT)
 #if defined(HAVE_DLOPEN) || defined(WIN32)
 #include "StartdPlugin.h"
@@ -56,9 +58,9 @@ Resource::Resource( CpuAttributes* cap, int rid, bool multiple_slots, Resource* 
 	}
 	if( _parent ) {
 		r_sub_id = _parent->m_id_dispenser->next();
-		tmp.sprintf_cat( "%d_%d", r_id, r_sub_id );
+		tmp.formatstr_cat( "%d_%d", r_id, r_sub_id );
 	} else {
-		tmp.sprintf_cat( "%d", r_id );
+		tmp.formatstr_cat( "%d", r_id );
 	}
 	r_id_str = strdup( tmp.Value() );
 
@@ -69,7 +71,7 @@ Resource::Resource( CpuAttributes* cap, int rid, bool multiple_slots, Resource* 
 	m_id_dispenser = NULL;
 
 		// we need this before we instantiate the Reqexp object...
-	tmp.sprintf( "SLOT_TYPE_%d_PARTITIONABLE", type() );
+	tmp.formatstr( "SLOT_TYPE_%d_PARTITIONABLE", type() );
 	if( param_boolean( tmp.Value(), false ) ) {
 		set_feature( PARTITIONABLE_SLOT );
 
@@ -97,7 +99,7 @@ Resource::Resource( CpuAttributes* cap, int rid, bool multiple_slots, Resource* 
 		tmpName = my_full_hostname();
 	}
 	if( multiple_slots || get_feature() == PARTITIONABLE_SLOT ) {
-		tmp.sprintf( "%s@%s", r_id_str, tmpName );
+		tmp.formatstr( "%s@%s", r_id_str, tmpName );
 		r_name = strdup( tmp.Value() );
 	} else {
 		r_name = strdup( tmpName );
@@ -113,7 +115,7 @@ Resource::Resource( CpuAttributes* cap, int rid, bool multiple_slots, Resource* 
 		if (log) {
 			MyString avail_stats_ckpt_file(log);
 			free(log);
-			tmp.sprintf( "%c.avail_stats.%d", DIR_DELIM_CHAR, rid);
+			tmp.formatstr( "%c.avail_stats.%d", DIR_DELIM_CHAR, rid);
 			avail_stats_ckpt_file += tmp;
 			r_avail_stats.checkpoint_filename(avail_stats_ckpt_file);
 		}
@@ -661,10 +663,10 @@ Resource::hackLoadForCOD( void )
 	}
 
 	MyString load;
-	load.sprintf( "%s=%.2f", ATTR_LOAD_AVG, r_pre_cod_total_load );
+	load.formatstr( "%s=%.2f", ATTR_LOAD_AVG, r_pre_cod_total_load );
 
 	MyString c_load;
-	c_load.sprintf( "%s=%.2f", ATTR_CONDOR_LOAD_AVG, r_pre_cod_condor_load );
+	c_load.formatstr( "%s=%.2f", ATTR_CONDOR_LOAD_AVG, r_pre_cod_condor_load );
 
 	if( IsDebugVerbose( D_LOAD ) ) {
 		if( r_cod_mgr->isRunning() ) {
@@ -1074,7 +1076,7 @@ Resource::final_update( void )
 	 * the IP was added to allow the collector to create a hash key to delete in O(1).
      */
 	 ClassAd::EscapeStringValue( r_name, escaped_name );
-     line.sprintf( "( TARGET.%s == \"%s\" )", ATTR_NAME, escaped_name.Value() );
+     line.formatstr( "( TARGET.%s == \"%s\" )", ATTR_NAME, escaped_name.Value() );
      invalidate_ad.AssignExpr( ATTR_REQUIREMENTS, line.Value() );
      invalidate_ad.Assign( ATTR_NAME, r_name );
      invalidate_ad.Assign( ATTR_MY_ADDRESS, daemonCore->publicNetworkIpAddr());
@@ -1209,7 +1211,7 @@ Resource::hold_job( bool soft )
 
 		want_hold_expr = r_classad->LookupExpr("WANT_HOLD");
 		if( want_hold_expr ) {
-			want_hold_str.sprintf( "%s = %s", "WANT_HOLD",
+			want_hold_str.formatstr( "%s = %s", "WANT_HOLD",
 								   ExprTreeToString( want_hold_expr ) );
 		}
 
@@ -1916,6 +1918,9 @@ Resource::publish( ClassAd* cap, amask_t mask )
 
 	free(ptr);
 
+	    // Is this the local universe startd?
+    cap->Assign(ATTR_IS_LOCAL_STARTD, param_boolean("IS_LOCAL_STARTD", false));
+
 		// Put in max vacate time expression
 	ptr = param(ATTR_MACHINE_MAX_VACATE_TIME);
 	if( ptr && !*ptr ) {
@@ -2054,7 +2059,7 @@ Resource::publishDeathTime( ClassAd* cap )
         }
     }
 
-    classad_attribute.sprintf( "%s=%d", ATTR_TIME_TO_LIVE, relative_death_time );
+    classad_attribute.formatstr( "%s=%d", ATTR_TIME_TO_LIVE, relative_death_time );
     cap->Insert( classad_attribute.Value() );
     return;
 }
@@ -2677,7 +2682,7 @@ Resource::getHookKeyword()
 {
 	if (!m_hook_keyword_initialized) {
 		MyString param_name;
-		param_name.sprintf("%s_JOB_HOOK_KEYWORD", r_id_str);
+		param_name.formatstr("%s_JOB_HOOK_KEYWORD", r_id_str);
 		m_hook_keyword = param(param_name.Value());
 		if (!m_hook_keyword) {
 			m_hook_keyword = param("STARTD_JOB_HOOK_KEYWORD");
@@ -2792,8 +2797,8 @@ Resource * initialize_resource(Resource * rip, ClassAd * req_classad, Claim* &le
 					// so we can try again.
 					dprintf(D_ALWAYS, 
 						"Job no longer matches partitionable slot after MODIFY_REQUEST_EXPR_ edits, retrying w/o edits\n");
-					if ( req_classad ) delete req_classad;	// delete modified ad
-					req_classad = unmodified_req_classad;	// put back original					
+					req_classad->CopyFrom(*unmodified_req_classad);	// put back original					
+					delete unmodified_req_classad;
 					unmodified_req_classad = NULL;
 				} else {
 					rip->dprintf(D_ALWAYS, 
@@ -2826,7 +2831,7 @@ Resource * initialize_resource(Resource * rip, ClassAd * req_classad, Claim* &le
 				cpus = 1; // reasonable default, for sure
 			}
 		}
-		type.sprintf_cat( "cpus=%d ", cpus );
+		type.formatstr_cat( "cpus=%d ", cpus );
 
 			// Look to see how much MEMORY is being requested.
 		schedd_requested_attr = "_condor_";
@@ -2840,7 +2845,7 @@ Resource * initialize_resource(Resource * rip, ClassAd * req_classad, Claim* &le
 				return NULL;
 			}
 		}
-		type.sprintf_cat( "memory=%d ", memory );
+		type.formatstr_cat( "memory=%d ", memory );
 
 
 			// Look to see how much DISK is being requested.
@@ -2855,17 +2860,17 @@ Resource * initialize_resource(Resource * rip, ClassAd * req_classad, Claim* &le
 				return NULL;
 			}
 		}
-		type.sprintf_cat( "disk=%d%%",
+		type.formatstr_cat( "disk=%d%%",
 			max((int) ceil((disk / (double) rip->r_attr->get_total_disk()) * 100), 1) );
 
 
         for (CpuAttributes::slotres_map_t::const_iterator j(rip->r_attr->get_slotres_map().begin());  j != rip->r_attr->get_slotres_map().end();  ++j) {
             string reqname;
-            sprintf(reqname, "%s%s", ATTR_REQUEST_PREFIX, j->first.c_str());
+            formatstr(reqname, "%s%s", ATTR_REQUEST_PREFIX, j->first.c_str());
             int reqval = 0;
             if (!req_classad->EvalInteger(reqname.c_str(), mach_classad, reqval)) reqval = 0;
             string attr;
-            sprintf(attr, " %s=%d", j->first.c_str(), reqval);
+            formatstr(attr, " %s=%d", j->first.c_str(), reqval);
             type += attr;
         }
 
@@ -2873,7 +2878,7 @@ Resource * initialize_resource(Resource * rip, ClassAd * req_classad, Claim* &le
 					  "Match requesting resources: %s\n", type.Value() );
 
 		type_list.initializeFromString( type.Value() );
-		cpu_attrs = resmgr->buildSlot( rip->r_id, &type_list, -rip->type(), false );
+		cpu_attrs = ::buildSlot( resmgr->m_attr, rip->r_id, &type_list, -rip->type(), false );
 		if( ! cpu_attrs ) {
 			rip->dprintf( D_ALWAYS,
 						  "Failed to parse attributes for request, aborting\n" );

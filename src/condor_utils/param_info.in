@@ -1958,6 +1958,7 @@ id=89
 [LIBEXEC]
 aliases=
 default=$(RELEASE_DIR)/libexec
+win32_default=$(BIN)
 version=0.0.0
 range=.*
 state=default
@@ -4628,22 +4629,6 @@ url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
 tags=,
 id=264
 
-[NET_REMAP_ENABLE]
-aliases=
-default=false
-version=0.0.0
-range=.*
-state=default
-type=bool
-is_macro=false
-reconfig=true
-customization=seldom
-friendly_name=Net Remap Enable
-usage=
-url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
-tags=,
-id=265
-
 [LOGS_USE_TIMESTAMP]
 aliases=
 default=false
@@ -4791,6 +4776,7 @@ id=274
 [SBIN]
 aliases=
 default=$(RELEASE_DIR)/sbin
+win32_default=$(BIN)
 version=0.0.0
 range=.*
 state=default
@@ -5430,7 +5416,7 @@ id=314
 
 [ENABLE_CLASSAD_CACHING]
 aliases=
-default=true
+default=false
 version=0.0.0
 range=.*
 state=default
@@ -10088,7 +10074,7 @@ url=
 tags=parrot
 id=602
 
-[DELEGATE_JOB_GSI_CREDENTIALS_RENEWAL]
+[DELEGATE_JOB_GSI_CREDENTIALS_REFRESH]
 aliases=
 default=0.25
 version=0.0.0
@@ -10098,7 +10084,7 @@ type=double
 is_macro=false
 reconfig=true
 customization=seldom
-friendly_name=Delegate Job GSI Credentials Renewal
+friendly_name=Delegate Job GSI Credentials Refresh
 usage=
 url=
 tags=
@@ -10120,6 +10106,54 @@ url=
 tags=
 id=601
 
+[STATISTICS_WINDOW_QUANTUM]
+aliases=
+default=240
+version=0.0.0
+range=1,1000000000
+state=default
+type=int
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=Size of Internal Statistics Ring Buffer In Seconds
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=scheduler
+id=602
+
+[STATISTICS_WINDOW_QUANTUM_DC]
+aliases=
+default=
+version=0.0.0
+range=1,1000000000
+state=default
+type=string
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=Size of Internal Statistics Ring Buffer In Seconds for DaemonCore Stats
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=scheduler
+id=602
+
+[STATISTICS_WINDOW_QUANTUM_SCHEDD]
+aliases=
+default=
+version=0.0.0
+range=1,1000000000
+state=default
+type=string
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=Size of Internal Statistics Ring Buffer In Seconds for Scheduler Stats
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=scheduler
+id=602
+
 [STATISTICS_WINDOW_SECONDS]
 aliases=
 default=1200
@@ -10138,11 +10172,11 @@ id=602
 
 [DCSTATISTICS_WINDOW_SECONDS]
 aliases=
-default=1200
+default=
 version=0.0.0
 range=1,1000000000
 state=default
-type=int
+type=string
 is_macro=false
 reconfig=true
 customization=seldom
@@ -10425,22 +10459,6 @@ url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
 tags=defrag,log
 id=550
 
-[JOB_QUEUE_LOG]
-aliases=
-default=$(SPOOL)/job_queue.log
-version=0.0.0
-range=.*
-state=default
-type=string
-is_macro=false
-reconfig=true
-customization=seldom
-friendly_name=Job Queue Log file
-usage=Job Queue File
-url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
-tags=log
-id=550
-
 [DEFRAG_UPDATE_INTERVAL]
 aliases=
 default=300
@@ -10651,7 +10669,7 @@ id=608
 
 [MODIFY_REQUEST_EXPR_REQUESTMEMORY]
 aliases=
-default=quantize(RequestMemory,{TotalSlotMemory / TotalSlotCpus / 4})
+default=quantize(RequestMemory,{128})
 version=7.7.6
 range=.*
 state=default
@@ -10744,3 +10762,51 @@ usage=
 url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
 tags=submit
 id=612
+
+[MAX_GLOBAL_JOB_PRIOS]
+aliases=
+default=500
+version=7.9.1
+range=.*
+state=default
+type=int
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=Maximum size of JobPrioArray in submitter ad
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=schedd
+id=613
+
+[USE_GLOBAL_JOB_PRIOS]
+aliases=
+default=false
+version=7.9.1
+range=.*
+state=default
+type=bool
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=Consider job priorities across multiple schedds
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=schedd
+id=614
+
+[TRANSFER_QUEUE_USER_EXPR]
+aliases=
+default=User
+version=7.9.1
+range=.*
+state=default
+type=string
+is_macro=false
+reconfig=true
+customization=seldom
+friendly_name=
+usage=
+url=http://cs.wisc.edu/condor/manual/v7.3/3_3Configuration.html#SECTION
+tags=schedd
+id=614

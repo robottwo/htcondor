@@ -43,8 +43,8 @@ struct GahpProxyInfo
 
 typedef void (* unicore_gahp_callback_func_t)(const char *update_ad_string);
 
-static const char *GAHPCLIENT_DEFAULT_SERVER_ID = "DEFAULT";
-static const char *GAHPCLIENT_DEFAULT_SERVER_PATH = "DEFAULT";
+#define GAHPCLIENT_DEFAULT_SERVER_ID "DEFAULT"
+#define GAHPCLIENT_DEFAULT_SERVER_PATH "DEFAULT"
 
 // Additional error values that GAHP calls can return
 ///
@@ -183,6 +183,7 @@ class GahpServer : public Service {
 	char *binary_path;
 	ArgList binary_args;
 	char *my_id;
+	int m_ssh_forward_port;
 
 	char *globus_gass_server_url;
 	char *globus_gt2_gram_callback_contact;
@@ -307,6 +308,8 @@ class GahpClient : public Service {
 		const char *getErrorString();
 
 		const char *getVersion();
+
+		int getSshForwardPort() { return server->m_ssh_forward_port; }
 
 		//-----------------------------------------------------------
 		
@@ -445,6 +448,16 @@ class GahpClient : public Service {
 		blah_job_refresh_proxy(const char *job_id, const char *proxy_file);
 
 		int
+		blah_download_sandbox(const char *sandbox_id, const ClassAd *job_ad,
+							  std::string &sandbox_path);
+
+		int
+		blah_upload_sandbox(const char *sandbox_id, const ClassAd *job_ad);
+
+		int
+		blah_destroy_sandbox(const char *sandbox_id, const ClassAd *job_ad);
+
+		int
 		nordugrid_submit(const char *hostname, const char *rsl, char *&job_id);
 
 		int
@@ -570,9 +583,16 @@ class GahpClient : public Service {
 							  StringList & returnStatus,
 							  char* & error_code );
 
+		int ec2_vm_status_all( std::string service_url,
+							   std::string publickeyfile,
+							   std::string privatekeyfile,
+							   StringList & returnStatus,
+							   char* & error_code );
+
 		int ec2_ping( std::string service_url,
 					  std::string publickeyfile,
-					  std::string privatekeyfile );
+					  std::string privatekeyfile,
+					  char* & error_code );
 
 		int ec2_vm_create_keypair( std::string service_url,
 								   std::string publickeyfile,
@@ -635,6 +655,44 @@ class GahpClient : public Service {
                               std::string device_id,
                               StringList & returnStatus,
                               char* & error_code );
+
+        // Is there a particular reason these aren't const references?
+        int ec2_spot_start( std::string service_url,
+                            std::string publickeyfile,
+                            std::string privatekeyfile,
+                            std::string ami_id,
+                            std::string spot_price,
+                            std::string keypair,
+                            std::string user_data,
+                            std::string user_data_file,
+                            std::string instance_type,
+                            std::string availability_zone,
+                            std::string vpc_subnet,
+                            std::string vpc_ip,
+                            std::string client_token,
+                            StringList & groupnames,
+                            char * & request_id,
+                            char * & error_code
+                          );
+        int ec2_spot_stop(  std::string service_url,
+                            std::string publickeyfile,
+                            std::string privatekeyfile,
+                            std::string request_id,
+                            char * & error_code
+                         );
+        int ec2_spot_status(    std::string service_url,
+                                std::string publickeyfile,
+                                std::string privatekeyfile,
+                                std::string request_id,
+                                StringList & returnStatus,
+                                char * & error_code
+                           );
+        int ec2_spot_status_all(    std::string service_url,
+                                    std::string publickeyfile,
+                                    std::string privatekeyfile,
+                                    StringList & returnStatus,
+                                    char * & error_code
+                               );
 
 		int
 		dcloud_submit( const char *service_url,
@@ -704,6 +762,8 @@ class GahpClient : public Service {
 #endif /* ifdef CONDOR_GLOBUS_HELPER_WANT_DUROC */
 
 		//@}
+
+    void setErrorString( const std::string & newErrorString );
 
 	private:
 

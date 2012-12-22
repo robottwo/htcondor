@@ -84,9 +84,19 @@ registerAllAmazonCommands(void)
 
 	registerAmazonGahpCommand(AMAZON_COMMAND_VM_START, 
 			AmazonVMStart::ioCheck, AmazonVMStart::workerFunction);
+    registerAmazonGahpCommand(AMAZON_COMMAND_VM_START_SPOT,
+            AmazonVMStartSpot::ioCheck, AmazonVMStartSpot::workerFunction);
 
 	registerAmazonGahpCommand(AMAZON_COMMAND_VM_STOP, 
 			AmazonVMStop::ioCheck, AmazonVMStop::workerFunction);
+	registerAmazonGahpCommand(AMAZON_COMMAND_VM_STOP_SPOT, 
+			AmazonVMStopSpot::ioCheck, AmazonVMStopSpot::workerFunction);
+
+    registerAmazonGahpCommand(AMAZON_COMMAND_VM_STATUS_SPOT,
+            AmazonVMStatusSpot::ioCheck, AmazonVMStatusSpot::workerFunction);
+
+    registerAmazonGahpCommand(AMAZON_COMMAND_VM_STATUS_ALL_SPOT,
+            AmazonVMStatusAllSpot::ioCheck, AmazonVMStatusAllSpot::workerFunction);
 
 	/*
 	registerAmazonGahpCommand(AMAZON_COMMAND_VM_REBOOT, 
@@ -223,7 +233,7 @@ main( int argc, char ** const argv )
 	set_mySubSystem("AMAZON_GAHP", SUBSYSTEM_TYPE_GAHP);
 
     config();
-    dprintf_config( "EC2_GAHP", get_param_functions() );
+    dprintf_config( "EC2_GAHP" );
     const char * debug_string = getenv( "DebugLevel" );
     if( debug_string && * debug_string ) {
         set_debug_flags( debug_string, 0 );
