@@ -56,16 +56,9 @@ public:
 
 	// wait up to the specified number of seconds to receive a client
 	// connection; second param is set to true if one is received,
-	// false otherwise.  On non-Windows platforms,
-	// the third parameter allows the caller to specify additional FDs to
-	// watch over.  The fourth parameter, if non-null, returns the set of
-	// FDs from the additional FDs which fired.
-#if defined(WIN32)
+	// false otherwise
+	//
 	bool accept_connection(int, bool&);
-#else
-	bool accept_connection(int timeout, bool& ready,
-		const fd_set* addl_fds=NULL, fd_set* result_fds=NULL);
-#endif
 
 	// close a connection, making it possible to accept another one
 	// via the accept_connection method

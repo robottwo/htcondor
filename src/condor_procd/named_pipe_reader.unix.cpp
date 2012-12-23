@@ -23,7 +23,6 @@
 #include "named_pipe_reader.unix.h"
 #include "named_pipe_watchdog.unix.h"
 #include "named_pipe_util.unix.h"
-#include <memory>
 
 bool
 NamedPipeReader::initialize(const char* addr)
@@ -146,7 +145,7 @@ NamedPipeReader::read_data(void* buffer, int len)
 }
 
 bool
-NamedPipeReader::poll(int timeout, bool& ready, const fd_set *additional_fds, fd_set *result_fds)
+NamedPipeReader::poll(int timeout, bool& ready)
 {
 	// TODO: select on the watchdog pipe, if we have one. this
 	// currently isn't a big deal since we only use poll() on
@@ -156,22 +155,9 @@ NamedPipeReader::poll(int timeout, bool& ready, const fd_set *additional_fds, fd
 
 	ASSERT(timeout >= -1);
 
-	std::auto_ptr<fd_set> read_fd_set_ptr(result_fds);
-	if (!result_fds) {
-		read_fd_set_ptr.reset(new fd_set);
-	}
-
-	fd_set &read_fd_set = *read_fd_set_ptr;
+	fd_set read_fd_set;
 	FD_ZERO(&read_fd_set);
 	FD_SET(m_pipe, &read_fd_set);
-
-	int max_fd = m_pipe;
-	if (additional_fds)
-		for (int idx=0; idx < FD_SETSIZE; idx++)
-			if (FD_ISSET(idx, additional_fds)) {
-				FD_SET(idx, &read_fd_set);
-				max_fd = max_fd >= idx ? max_fd : idx;
-			}
 
 	struct timeval* tv_ptr = NULL;
 	struct timeval tv;
@@ -181,9 +167,8 @@ NamedPipeReader::poll(int timeout, bool& ready, const fd_set *additional_fds, fd
 		tv_ptr = &tv;
 	}
 
-	int ret = select(max_fd + 1, &read_fd_set, NULL, NULL, tv_ptr);
+	int ret = select(m_pipe + 1, &read_fd_set, NULL, NULL, tv_ptr);
 	if (ret == -1) {
-		if (result_fds) read_fd_set_ptr.release();
 		if( errno == EINTR ) {
 				// We could keep looping until all of the time has passed,
 				// but currently nothing depends on this, so just return
@@ -201,10 +186,6 @@ NamedPipeReader::poll(int timeout, bool& ready, const fd_set *additional_fds, fd
 
 	ready = FD_ISSET(m_pipe, &read_fd_set);
 
-	if (result_fds) {
-		read_fd_set_ptr.release();
-		FD_CLR(m_pipe, result_fds);
-	}
 	return true;
 }
 

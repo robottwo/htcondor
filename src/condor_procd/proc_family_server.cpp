@@ -405,37 +405,17 @@ ProcFamilyServer::wait_loop()
 	
 		time_t time_before = time(NULL);
 		bool command_ready;
-
-		// Wait for a connection or one of the event FDs to fire
-#if defined(HAVE_EXT_LIBCGROUP)
-		fd_set fired_fds;
-		const fd_set &input_fds = m_monitor.get_event_fds();
-		bool ok = m_server->accept_connection(snapshot_countdown,
-		                                      command_ready,
-		                                      &input_fds,
-		                                      &fired_fds);
-#else
 		bool ok = m_server->accept_connection(snapshot_countdown,
 		                                      command_ready);
-#endif
 		if (!ok) {
 			EXCEPT("ProcFamilyServer: failed trying to accept client\n");
 		}
 		if (!command_ready) {
-			// possible timeout; make sure we execute the timer handler
+			// timeout; make sure we execute the timer handler
 			// next time around by explicitly setting the
 			// countdown to zero
 			//
 			snapshot_countdown = 0;
-
-#if defined(HAVE_EXT_LIBCGROUP)
-			// Another possibility is one of the event FDs has fired.
-			for (int idx=0; idx<FD_SETSIZE; idx++) {
-				if (FD_ISSET(idx, &input_fds) && FD_ISSET(idx, &fired_fds)) {
-					m_monitor.notify_event(idx);
-				}
-			}
-#endif
 			continue;
 		}
 
@@ -449,9 +429,7 @@ ProcFamilyServer::wait_loop()
 		}
 
 		// read the command int from the client
-		// Note that we don't check our event FDs while intereacting
-		// with the client; we assume that if they can talk to us, we
-		// don't worry about a potential Denial of Service
+		//
 		int command;
 		read_from_client(&command, sizeof(int));
 

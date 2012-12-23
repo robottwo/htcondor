@@ -61,7 +61,6 @@ ProcFamilyMonitor::ProcFamilyMonitor(pid_t pid,
 #endif
 #if defined(HAVE_EXT_LIBCGROUP)
 	m_cgroup_tracker = NULL;
-	FD_ZERO(&m_event_set);
 #endif
 	m_login_tracker = new LoginTracker(this);
 	ASSERT(m_login_tracker != NULL);
@@ -374,48 +373,6 @@ ProcFamilyMonitor::track_family_via_cgroup(pid_t pid, const char * cgroup)
 	}
 
 	return PROC_FAMILY_ERROR_SUCCESS;
-}
-
-void
-ProcFamilyMonitor::subscribe_oom_event(ProcFamily & family, int efd)
-{
-	m_oom_events.push_back(std::pair<ProcFamily *,int>(&family, efd));
-	FD_SET(efd, &m_event_set);
-}
-
-void
-ProcFamilyMonitor::unsubscribe_oom_event(int efd)
-{
-	std::vector<std::pair<ProcFamily *,int> >::iterator it;
-	for (it=m_oom_events.begin(); it != m_oom_events.end(); it++) {
-		if (efd == it->second) {
-			m_oom_events.erase(it);
-			FD_CLR(efd, &m_event_set);
-			return;
-		}
-	}
-}
-
-void
-ProcFamilyMonitor::notify_event(int fd)
-{
-	bool did_spree = false;
-	std::vector<std::pair<ProcFamily *,int> >::const_iterator it;
-	for (it=m_oom_events.begin(); it != m_oom_events.end(); it++) {
-		if (fd == it->second) {
-			it->first->spree(SIGKILL);
-			did_spree = true;
-		}
-	}
-	if (!did_spree) {
-		dprintf(D_PROCFAMILY,
-			"Got an unexpected notification for ProcFamily monitor.\n");
-		return;
-	} else {
-		dprintf(D_PROCFAMILY,
-			"Killed family due to OOM event.\n");
-	}
-	unsubscribe_oom_event(fd);
 }
 #endif
 

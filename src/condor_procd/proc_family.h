@@ -180,9 +180,6 @@ private:
 	Cgroup m_cgroup;
 	std::string m_cgroup_string;
 	CgroupManager &m_cm;
-
-	// File descriptors used for OOM management.
-	int m_oom_fd, m_oom_efd;
 	static long clock_tick;
 	static bool have_warned_about_memsw;
 	// Sometimes Condor doesn't successfully clear out the cgroup from the
@@ -196,7 +193,6 @@ private:
 	// handle the OOM events for any running jobs and that we are immune
 	// to the built-in OOM killer
 	int setup_oom_score();
-	int setup_oom_event();
 
 	int count_tasks_cgroup();
 	int aggregate_usage_cgroup_blockio(ProcFamilyUsage*);

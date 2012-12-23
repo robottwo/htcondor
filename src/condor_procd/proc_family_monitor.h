@@ -33,7 +33,6 @@ class PIDTracker;
 class GroupTracker;
 #endif
 #if defined(HAVE_EXT_LIBCGROUP)
-#include <sys/select.h>
 class CGroupTracker;
 #endif
 class LoginTracker;
@@ -99,16 +98,6 @@ public:
 
 	// Associate a cgroup with a family
 	proc_family_error_t track_family_via_cgroup(pid_t, const char*);
-
-	// Retrieve the event fds for the associated server to monitor
-	const fd_set & get_event_fds() const {return m_event_set;}
-
-	// Inform the monitor of a new event FD to watch
-	void subscribe_oom_event(ProcFamily & family, int efd);
-	void unsubscribe_oom_event(int efd);
-
-	// Notify the monitor one of its event FDs has triggered.
-	void notify_event(int fd);
 #endif
 
 	// for sending signals to a single process
@@ -191,8 +180,6 @@ private:
 #endif
 #if defined(HAVE_EXT_LIBCGROUP)
 	CGroupTracker*      m_cgroup_tracker;
-	fd_set              m_event_set;
-	std::vector<std::pair<ProcFamily*, int> > m_oom_events;
 #endif
 	LoginTracker*       m_login_tracker;
 	EnvironmentTracker* m_environment_tracker;

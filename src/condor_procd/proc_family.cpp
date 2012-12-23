@@ -28,15 +28,13 @@
 #endif
 
 #if defined(HAVE_EXT_LIBCGROUP)
-#include <unistd.h>
-#include <sys/eventfd.h>
-
 #include "libcgroup.h"
 
 #define FROZEN "FROZEN"
 #define THAWED "THAWED"
 #define BLOCK_STATS_LINE_MAX 64
 
+#include <unistd.h>
 long ProcFamily::clock_tick = sysconf( _SC_CLK_TCK );
 
 // Swap accounting is sometimes turned off.  We use this variable so we
@@ -61,8 +59,6 @@ ProcFamily::ProcFamily(ProcFamilyMonitor* monitor,
 #if defined(HAVE_EXT_LIBCGROUP)
 	, m_cgroup_string(""),
 	m_cm(CgroupManager::getInstance()),
-	m_oom_fd(-1),
-	m_oom_efd(-1),
 	m_initial_user_cpu(0),
 	m_initial_sys_cpu(0)
 #endif
@@ -93,15 +89,6 @@ ProcFamily::~ProcFamily()
 	//
 	if (m_proxy != NULL) {
 		free(m_proxy);
-	}
-#endif
-
-#if defined(HAVE_EXT_LIBCGROUP)
-	if (m_oom_fd != -1)
-		close(m_oom_fd);
-	if (m_oom_efd != -1) {
-		m_monitor->unsubscribe_oom_event(m_oom_efd);
-		close(m_oom_efd);
 	}
 #endif
 }
@@ -249,127 +236,6 @@ ProcFamily::setup_oom_score()
 }
 
 int
-ProcFamily::setup_oom_event()
-{
-	// Initialize the event descriptor
-	m_oom_efd = eventfd(0, EFD_CLOEXEC);
-	if (m_oom_efd == -1) {
-		dprintf(D_PROCFAMILY,
-			"Unable to create new event FD for ProcFamily %u: %u %s\n",
-			m_root_pid, errno, strerror(errno));
-		return 1;
-	}
-
-	// Find the memcg location on disk
-	void * handle = NULL;
-	struct cgroup_mount_point mount_info;
-	int ret = cgroup_get_controller_begin(&handle, &mount_info);
-	std::stringstream oom_control;
-	std::stringstream event_control;
-	bool found_memcg = false;
-	while (ret == 0) {
-		if (strcmp(mount_info.name, MEMORY_CONTROLLER_STR) == 0) {
-			found_memcg = true;
-			oom_control << mount_info.path << "/";
-			event_control << mount_info.path << "/";
-			break;
-		}
-		cgroup_get_controller_next(&handle, &mount_info);
-	}
-	if (!found_memcg && (ret != ECGEOF)) {
-		dprintf(D_PROCFAMILY,
-			"Error while locating memcg controller for ProcFamily %u: %u %s\n",
-			m_root_pid, ret, cgroup_strerror(ret));
-		return 1;
-	}
-	cgroup_get_controller_end(&handle);
-	if (found_memcg == false) {
-		dprintf(D_PROCFAMILY,
-			"Memcg is not available; OOM notification disabled for ProcFamily %u.\n",
-			m_root_pid);
-		return 1;
-	}
-
-	// Finish constructing the location of the control files
-	oom_control << m_cgroup_string << "/memory.oom_control";
-	std::string oom_control_str = oom_control.str();
-	event_control << m_cgroup_string << "/cgroup.event_control";
-	std::string event_control_str = event_control.str();
-
-	// Open the oom_control and event control files
-	m_oom_fd = open(oom_control_str.c_str(), O_RDONLY | O_CLOEXEC);
-	if (m_oom_fd == -1) {
-		dprintf(D_PROCFAMILY,
-			"Unable to open the OOM control file for ProcFamily %u: %u %s\n",
-			m_root_pid, errno, strerror(errno));
-		return 1;
-	}
-	int event_ctrl_fd = open(event_control_str.c_str(), O_WRONLY | O_CLOEXEC);
-	if (event_ctrl_fd == -1) {
-		dprintf(D_PROCFAMILY,
-			"Unable to open event control for ProcFamily %u: %u %s\n",
-			m_root_pid, errno, strerror(errno));
-		return 1;
-	}
-
-	// Inform Linux we will be handling the OOM events for this container.
-	int oom_fd2 = open(oom_control_str.c_str(), O_WRONLY | O_CLOEXEC);
-	if (oom_fd2 == -1) {
-		dprintf(D_PROCFAMILY,
-			"Unable to open the OOM control file for writing for ProcFamily %u: %u %s\n",
-			m_root_pid, errno, strerror(errno));
-		return 1;
-	}
-	const char limits [] = "1";
-	size_t nleft = 1;
-	ssize_t nwritten;
-	while (nleft > 0) {
-		nwritten = write(oom_fd2, &limits, 1);
-		if (nwritten < 0) {
-			if (errno == EINTR)
-				continue;
-			dprintf(D_PROCFAMILY,
-				"Unable to set OOM control to %s for ProcFamily %u: %u %s\n",
-					limits, m_root_pid, errno, strerror(errno));
-			close(event_ctrl_fd);
-			close(oom_fd2);
-			return 1;
-		}
-		if (nwritten > 0)
-			break;
-	}
-	close(oom_fd2);
-
-	// Create the subscription string:
-	std::stringstream sub_ss;
-	sub_ss << m_oom_efd << " " << m_oom_fd;
-	std::string sub_str = sub_ss.str();
-
-	// Basically, full_write without bringing in condor_utils...
-	nleft = sub_str.size();
-	const char * ptr = sub_str.c_str();
-	while (nleft > 0) {
-		nwritten = write(event_ctrl_fd, ptr, nleft);
-		if (nwritten < 0) {
-			if (errno == EINTR)
-				continue;
-			dprintf(D_PROCFAMILY,
-				"Unable to write into event control file for ProcFamily %u: %u %s\n",
-				m_root_pid, errno, strerror(errno));
-			close(event_ctrl_fd);
-			return 1;
-		}
-		nleft -= nwritten;
-		ptr += nwritten;
-	}
-	close(event_ctrl_fd);
-
-	// Inform the monitor it should watch our event fd
-	m_monitor->subscribe_oom_event(*this, m_oom_efd);
-	return 0;
-}
-
-int
 ProcFamily::set_cgroup(const std::string &cgroup_string)
 {
 	if (cgroup_string == "/") {
@@ -400,8 +266,7 @@ ProcFamily::set_cgroup(const std::string &cgroup_string)
 
 	// Configure settings for OOM killer.  If we successfully manage the
 	// OOM for the family, then we also mark ourselves immune to OOM.
-	if (!setup_oom_event())
-		setup_oom_score();
+	setup_oom_score();
 
 	// Now that we have a cgroup, let's move all the existing processes to it
 	ProcFamilyMember* member = m_member_list;
@@ -511,9 +376,10 @@ ProcFamily::spree_cgroup(int sig)
 	ASSERT (m_cgroup.isValid());
 	cgroup_get_cgroup(&const_cast<struct cgroup&>(m_cgroup.getCgroup()));
 
-	void *handle = NULL;
+	void **handle = (void **)malloc(sizeof(void*));
+	ASSERT (handle != NULL);
 	pid_t pid;
-	err = cgroup_get_task_begin(m_cgroup_string.c_str(), FREEZE_CONTROLLER_STR, &handle, &pid);
+	err = cgroup_get_task_begin(m_cgroup_string.c_str(), FREEZE_CONTROLLER_STR, handle, &pid);
 	if ((err > 0) && (err != ECGEOF))
 		handle = NULL;
 	while (err != ECGEOF) {
@@ -524,13 +390,14 @@ ProcFamily::spree_cgroup(int sig)
 			goto release;
 		}
 		send_signal(pid, sig);
-		err = cgroup_get_task_next(&handle, &pid);
+		err = cgroup_get_task_next(handle, &pid);
 	}
 	err = 0;
 
 	release:
 	if (handle != NULL) {
-		cgroup_get_task_end(&handle);
+		cgroup_get_task_end(handle);
+		free(handle);
 	}
 
 	freezer_cgroup(THAWED);

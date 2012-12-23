@@ -62,11 +62,9 @@ public:
 
 	// second parameter is set to true if the named pipe
 	// becomes ready for reading within the given timeout
-	// period, otherwise it's set to false.
-	// If additional_fds is given, then those FDs are also included in
-	// the poll.  If result_fds is given, then the ready FDs are
-	// returned in that parameter EXCEPT for the fd associated with the pipe.
-	bool poll(int, bool&, const fd_set *additional_fds=NULL, fd_set *result_fds=NULL);
+	// period, otherwise it's set to false
+	//
+	bool poll(int, bool&);
 
 	// Determine if the named pipe on the disk is the actual named pipe that
 	// was initially opened. In practice it means that the dev and inode fields
