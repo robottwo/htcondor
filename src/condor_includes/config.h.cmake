@@ -585,4 +585,7 @@
 /* Define to 1 if the compiler does not support C++11 but does support TR1 */
 #cmakedefine PREFER_TR1
 
+/* Define if linux/perf_event.h is available.*/
+#cmakedefine HAVE_PERF_EVENT_H
+
 #endif

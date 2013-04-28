@@ -62,6 +62,17 @@ ProcFamily::ProcFamily(ProcFamilyMonitor* monitor,
 	m_initial_user_cpu(0),
 	m_initial_sys_cpu(0)
 #endif
+#ifdef HAVE_PERF_EVENT_H
+	, m_perf(condor::ProcdPerfTracker::get_instance()),
+	m_exited_cpu_instructions(0),
+	m_exited_cpu_cycles(0),
+	m_exited_cpu_cache_references(0),
+	m_exited_cpu_cache_misses(0),
+	m_exited_cpu_migrations(0),
+	m_exited_context_switches(0),
+	m_exited_cpu_branch_instructions(0),
+	m_exited_cpu_branch_misses(0)
+#endif
 {
 #if !defined(WIN32)
 	m_proxy = NULL;
@@ -670,6 +681,10 @@ ProcFamily::aggregate_usage(ProcFamilyUsage* usage)
 {
 	ASSERT(usage != NULL);
 
+#ifdef HAVE_PERF_EVENT_H
+	m_perf.zero_usage();
+#endif
+
 	// factor in usage from processes that are still alive
 	//
 	ProcFamilyMember* member = m_member_list;
@@ -696,6 +711,15 @@ ProcFamily::aggregate_usage(ProcFamilyUsage* usage)
 			usage->total_proportional_set_size += member->m_proc_info->pssize;
 		}
 #endif
+#ifdef HAVE_PERF_EVENT_H
+		if (member->m_proc_info && usage)
+		{
+			if (m_perf.add_status(member->m_proc_info->pid, *usage, member->m_proc_info) < 0)
+			{
+				dprintf(D_ALWAYS, "Retrieval of perf stats failed.\n");
+			}
+		}
+#endif
 
 		// number of alive processes
 		//
@@ -708,6 +732,16 @@ ProcFamily::aggregate_usage(ProcFamilyUsage* usage)
 	//
 	usage->user_cpu_time += m_exited_user_cpu_time;
 	usage->sys_cpu_time += m_exited_sys_cpu_time;
+#ifdef HAVE_PERF_EVENT_H
+	usage->cpu_instructions += m_exited_cpu_instructions;
+	usage->cpu_cycles += m_exited_cpu_cycles;
+	usage->cpu_cache_references += m_exited_cpu_cache_references;
+	usage->cpu_cache_misses += m_exited_cpu_cache_misses;
+	usage->cpu_migrations += m_exited_cpu_migrations;
+	usage->context_switches += m_exited_context_switches;
+	usage->cpu_branch_instructions += m_exited_cpu_branch_instructions;
+	usage->cpu_branch_misses += m_exited_cpu_branch_misses;
+#endif
 
 #if defined(HAVE_EXT_LIBCGROUP)
 	aggregate_usage_cgroup(usage);
@@ -767,6 +801,13 @@ ProcFamily::add_member(procInfo* pi)
 	}
 	m_member_list = member;
 
+#ifdef HAVE_PERF_EVENT_H
+	if (m_root_pid != 0)
+	{
+		m_perf.start_tracking(member->m_proc_info->pid);
+	}
+#endif
+
 #if defined(HAVE_EXT_LIBCGROUP)
 	// Add to the associated cgroup
 	migrate_to_cgroup(pi->pid);
@@ -817,7 +858,26 @@ ProcFamily::remove_exited_processes()
 				member->m_proc_info->user_time;
 			m_exited_sys_cpu_time +=
 				member->m_proc_info->sys_time;
-
+			// TODO: handle unset values correctly.
+#ifdef HAVE_PERF_EVENT_H
+			m_exited_cpu_instructions +=
+				member->m_proc_info->cpu_instructions;
+			m_exited_cpu_cycles +=
+				member->m_proc_info->cpu_cycles;
+			m_exited_cpu_cache_references +=
+				member->m_proc_info->cpu_cache_references;
+			m_exited_cpu_cache_misses +=
+				member->m_proc_info->cpu_cache_misses;
+			m_exited_cpu_migrations +=
+				member->m_proc_info->cpu_migrations;
+			m_exited_context_switches +=
+				member->m_proc_info->context_switches;
+			m_exited_cpu_branch_instructions +=
+				member->m_proc_info->cpu_branch_instructions;
+			m_exited_cpu_branch_misses +=
+				member->m_proc_info->cpu_branch_misses;
+			m_perf.stop_tracking(member->m_proc_info->pid);
+#endif
 			// keep our monitor's hash table up to date!
 			//
 			m_monitor->remove_member(member);

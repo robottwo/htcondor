@@ -24,6 +24,7 @@
 #include "../condor_procapi/procapi.h"
 #include "proc_family_member.h"
 #include "proc_family_io.h"
+#include "procd_perf_stats.h"
 
 #if defined(HAVE_EXT_LIBCGROUP)
 #include "../condor_starter.V6.1/cgroup.linux.h"
@@ -196,6 +197,18 @@ private:
 	int migrate_to_cgroup(pid_t);
 	void update_max_image_size_cgroup();
 	int get_cpu_usage_cgroup(long &user_cpu, long &sys_cpu);
+#endif
+
+#ifdef HAVE_PERF_EVENT_H
+	condor::ProcdPerfTracker &m_perf;
+	long long m_exited_cpu_instructions;
+	long long m_exited_cpu_cycles;
+	long long m_exited_cpu_cache_references;
+	long long m_exited_cpu_cache_misses;
+	long long m_exited_cpu_migrations;
+	long long m_exited_context_switches;
+	long long m_exited_cpu_branch_instructions;
+	long long m_exited_cpu_branch_misses;
 #endif
 };
 

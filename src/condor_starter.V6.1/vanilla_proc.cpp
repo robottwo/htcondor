@@ -541,6 +541,19 @@ VanillaProc::PublishUpdateAd( ClassAd* ad )
 		ad->InsertOrUpdate( buf );
 	}
 
+	if (usage->cpu_instructions >= 0 && usage->cpu_cycles >= 0) {
+		dprintf(D_ALWAYS, "Found perf stats\n");
+		float ipc = static_cast<float>(usage->cpu_instructions)/static_cast<float>(usage->cpu_cycles);
+		ad->InsertAttr(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, ipc);
+	}
+	if (usage->cpu_instructions >= 0) {
+		ad->InsertAttr(ATTR_JOB_INSTRUCTIONS, usage->cpu_instructions);
+	}
+	if (usage->cpu_cache_misses >= 0 && usage->cpu_cache_references >= 0) {
+		float hit_rate = 1 - (static_cast<float>(usage->cpu_cache_misses)/static_cast<float>(usage->cpu_cache_references));
+		ad->InsertAttr(ATTR_JOB_CACHE_HIT_RATE, hit_rate);
+	}
+
 		// Update our knowledge of how many processes the job has
 	num_pids = usage->num_procs;
 

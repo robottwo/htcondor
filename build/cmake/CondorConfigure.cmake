@@ -215,6 +215,7 @@ if( NOT WINDOWS)
 	check_include_files("valgrind.h" HAVE_VALGRIND_H)
 	check_include_files("procfs.h" HAVE_PROCFS_H)
 	check_include_files("sys/procfs.h" HAVE_SYS_PROCFS_H)
+	check_include_files("linux/perf_event.h" HAVE_PERF_EVENT_H)
 
 	check_type_exists("struct ifconf" "sys/socket.h;net/if.h" HAVE_STRUCT_IFCONF)
 	check_type_exists("struct ifreq" "sys/socket.h;net/if.h" HAVE_STRUCT_IFREQ)

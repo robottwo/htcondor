@@ -94,6 +94,15 @@ struct ProcFamilyUsage {
 	// These are signed so a negative number indicates uninitialized
 	long          block_read_bytes;
 	long          block_write_bytes;
+	// CPU-level performance tracking
+	long long     cpu_instructions;
+	long long     cpu_cycles;
+	long long     cpu_cache_references;
+	long long     cpu_cache_misses;
+	long long     cpu_migrations;
+	long long     context_switches;
+	long long     cpu_branch_instructions;
+	long long     cpu_branch_misses;
 
 	ProcFamilyUsage() :
 		user_cpu_time(0),
@@ -108,7 +117,15 @@ struct ProcFamilyUsage {
 #endif
 		num_procs(0),
 		block_read_bytes(0),
-		block_write_bytes(0)
+		block_write_bytes(0),
+		cpu_instructions(-1),
+		cpu_cycles(-1),
+		cpu_cache_references(-1),
+		cpu_cache_misses(-1),
+		cpu_migrations(-1),
+		context_switches(-1),
+		cpu_branch_instructions(-1),
+		cpu_branch_misses(-1)
 	{ }
 };
 

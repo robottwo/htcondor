@@ -250,6 +250,24 @@ struct procInfo {
   long user_time;
   /// time (secs) in system mode 
   long sys_time;
+#ifdef HAVE_PERF_EVENT_H
+  /// CPU instructions executed by the process
+  long long cpu_instructions;
+  /// CPU cycles run for the process
+  long long cpu_cycles;
+  /// CPU last-level-cache references
+  long long cpu_cache_references;
+  /// CPU last-level-cache misses
+  long long cpu_cache_misses;
+  /// Number of CPU migrations
+  long long cpu_migrations;
+  /// Number of context switches
+  long long context_switches;
+  /// Number of branch instructions executed by the process
+  long long cpu_branch_instructions;
+  /// Number of branch misses
+  long long cpu_branch_misses;
+#endif
   /// seconds (wall clock) since process creation.
   long age; 
 

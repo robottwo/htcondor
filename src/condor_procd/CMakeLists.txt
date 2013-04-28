@@ -40,4 +40,8 @@ if (LINUX AND WANT_FULL_DEPLOYMENT)
 	condor_exe( gidd_alloc "gidd_alloc.cpp" ${C_SBIN} "" OFF)
 endif(LINUX AND WANT_FULL_DEPLOYMENT)
 
+if (HAVE_PERF_EVENT_H)
+condor_exe( procd_perf_stats_tester "procd_perf_stats_tester.cpp;procd_perf_stats.cpp"  "" "" OFF)
+endif(HAVE_PERF_EVENT_H)
+
 set( PROCD_CLIENT_UTIL_SRCS "${ProcClientElements}" PARENT_SCOPE )

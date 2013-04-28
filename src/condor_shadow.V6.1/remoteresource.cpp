@@ -1035,6 +1035,18 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 		jobAd->Assign(ATTR_JOB_REMOTE_USER_CPU, float_value);
 	}
 
+	double double_val;
+	if( update_ad->EvaluateAttrReal(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, double_val) ) {
+		jobAd->Assign(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, double_val);
+	}
+	long long instructions;
+	if( update_ad->EvaluateAttrInt(ATTR_JOB_INSTRUCTIONS, instructions) ) {
+		jobAd->Assign(ATTR_JOB_INSTRUCTIONS, instructions);
+	}
+	if( update_ad->EvaluateAttrReal(ATTR_JOB_CACHE_HIT_RATE, double_val) ) {
+		jobAd->Assign(ATTR_JOB_CACHE_HIT_RATE, double_val);
+	}
+
 	if( update_ad->LookupInteger(ATTR_IMAGE_SIZE, int64_value) ) {
 		if( int64_value > image_size_kb ) {
 			image_size_kb = int64_value;

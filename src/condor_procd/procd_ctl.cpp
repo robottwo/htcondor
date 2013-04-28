@@ -426,6 +426,23 @@ get_usage(ProcFamilyClient& pfc, int argc, char* argv[])
 		printf("Bytes read from block devices (KB): %lu\n", pfu.block_read_bytes/1024);
 	if (pfu.block_write_bytes >= 0)
 		printf("Bytes written to block devices (KB): %lu\n", pfu.block_write_bytes/1024);
+	if (pfu.cpu_instructions >= 0)
+		printf("CPU instructions: %lld\n", pfu.cpu_instructions);
+	if (pfu.cpu_cycles >= 0)
+		printf("CPU cycles: %lld\n", pfu.cpu_cycles);
+	if (pfu.cpu_cache_references >= 0)
+		printf("CPU cache references: %lld\n", pfu.cpu_cache_references);
+	if (pfu.cpu_cache_misses >= 0)
+		printf("CPU cache misses: %lld\n", pfu.cpu_cache_misses);
+	if (pfu.cpu_migrations >= 0)
+		printf("CPU migrations: %lld\n", pfu.cpu_migrations);
+	if (pfu.context_switches >= 0)
+		printf("CPU context switches: %lld\n", pfu.context_switches);
+	if (pfu.cpu_branch_instructions >= 0)
+		printf("CPU branch instructions: %lld\n", pfu.cpu_branch_instructions);
+	if (pfu.cpu_branch_misses >= 0)
+		printf("CPU branch misses: %lld\n", pfu.cpu_branch_misses);
+
 	return 0;
 }
 
