@@ -1037,14 +1037,26 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 
 	double double_val;
 	if( update_ad->EvaluateAttrReal(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, double_val) ) {
-		jobAd->Assign(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, double_val);
+		jobAd->InsertAttr(ATTR_JOB_INSTRUCTIONS_PER_CYCLE, double_val);
 	}
-	long long instructions;
-	if( update_ad->EvaluateAttrInt(ATTR_JOB_INSTRUCTIONS, instructions) ) {
-		jobAd->Assign(ATTR_JOB_INSTRUCTIONS, instructions);
+	long long ll_val;
+	if( update_ad->EvaluateAttrInt(ATTR_JOB_INSTRUCTIONS, ll_val) ) {
+		jobAd->InsertAttr(ATTR_JOB_INSTRUCTIONS, ll_val);
 	}
 	if( update_ad->EvaluateAttrReal(ATTR_JOB_CACHE_HIT_RATE, double_val) ) {
-		jobAd->Assign(ATTR_JOB_CACHE_HIT_RATE, double_val);
+		jobAd->InsertAttr(ATTR_JOB_CACHE_HIT_RATE, double_val);
+	}
+	if( update_ad->EvaluateAttrInt(ATTR_JOB_CPU_MIGRATIONS, ll_val) ) {
+		jobAd->InsertAttr(ATTR_JOB_CPU_MIGRATIONS, ll_val);
+	} 
+	if( update_ad->EvaluateAttrInt(ATTR_JOB_CONTEXT_SWITCHES, ll_val) ) {
+		jobAd->InsertAttr(ATTR_JOB_CONTEXT_SWITCHES, ll_val);
+	}
+	if( update_ad->EvaluateAttrReal(ATTR_JOB_CPU_BRANCH_INSTRUCTION_RATE, double_val) ) {
+		jobAd->InsertAttr(ATTR_JOB_CPU_BRANCH_INSTRUCTION_RATE, double_val);
+	}
+	if( update_ad->EvaluateAttrReal(ATTR_JOB_BRANCH_PREDICTION_MISS_RATE, double_val) ) {
+		jobAd->InsertAttr(ATTR_JOB_BRANCH_PREDICTION_MISS_RATE, double_val);
 	}
 
 	if( update_ad->LookupInteger(ATTR_IMAGE_SIZE, int64_value) ) {

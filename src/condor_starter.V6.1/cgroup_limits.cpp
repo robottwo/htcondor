@@ -12,7 +12,7 @@ CgroupLimits::CgroupLimits(std::string &cgroup) : m_cgroup_string(cgroup)
 {
 	TemporaryPrivSentry sentry(PRIV_ROOT);
 	CgroupManager::getInstance().create(m_cgroup_string, m_cgroup,
-		CgroupManager::MEMORY_CONTROLLER | CgroupManager::CPU_CONTROLLER | CgroupManager::BLOCK_CONTROLLER,
+		CgroupManager::MEMORY_CONTROLLER | CgroupManager::CPU_CONTROLLER | CgroupManager::BLOCK_CONTROLLER | CgroupManager::PERF_CONTROLLER,
 		CgroupManager::NO_CONTROLLERS,
 		false, false);
 }

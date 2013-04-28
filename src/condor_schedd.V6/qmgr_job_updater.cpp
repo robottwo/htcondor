@@ -136,6 +136,13 @@ QmgrJobUpdater::initJobQueueAttrLists( void )
 	common_job_queue_attrs->insert( ATTR_TRANSFERRING_INPUT );
 	common_job_queue_attrs->insert( ATTR_TRANSFERRING_OUTPUT );
 	common_job_queue_attrs->insert( ATTR_TRANSFER_QUEUED );
+	common_job_queue_attrs->insert( ATTR_JOB_CACHE_HIT_RATE );
+	common_job_queue_attrs->insert( ATTR_JOB_INSTRUCTIONS_PER_CYCLE );
+	common_job_queue_attrs->insert( ATTR_JOB_INSTRUCTIONS );
+	common_job_queue_attrs->insert( ATTR_JOB_CPU_MIGRATIONS );
+	common_job_queue_attrs->insert( ATTR_JOB_CONTEXT_SWITCHES );
+	common_job_queue_attrs->insert( ATTR_JOB_CPU_BRANCH_INSTRUCTION_RATE );
+	common_job_queue_attrs->insert( ATTR_JOB_BRANCH_PREDICTION_MISS_RATE );
 
 	hold_job_queue_attrs = new StringList();
 	hold_job_queue_attrs->insert( ATTR_HOLD_REASON );

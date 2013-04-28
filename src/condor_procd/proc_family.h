@@ -177,6 +177,7 @@ private:
 	char* m_proxy;
 #endif
 
+	bool m_perf_uses_cgroup;
 #if defined(HAVE_EXT_LIBCGROUP)
 	Cgroup m_cgroup;
 	std::string m_cgroup_string;

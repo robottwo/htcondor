@@ -553,6 +553,20 @@ VanillaProc::PublishUpdateAd( ClassAd* ad )
 		float hit_rate = 1 - (static_cast<float>(usage->cpu_cache_misses)/static_cast<float>(usage->cpu_cache_references));
 		ad->InsertAttr(ATTR_JOB_CACHE_HIT_RATE, hit_rate);
 	}
+	if (usage->cpu_migrations >= 0) {
+		ad->InsertAttr(ATTR_JOB_CPU_MIGRATIONS, usage->cpu_migrations);
+	}
+	if (usage->context_switches >= 0) {
+		ad->InsertAttr(ATTR_JOB_CONTEXT_SWITCHES, usage->context_switches);
+	}
+	if (usage->cpu_branch_instructions >= 0 && usage->cpu_instructions >= 0) {
+		float branch_perc = static_cast<float>(usage->cpu_branch_instructions)/static_cast<float>(usage->cpu_instructions);
+		ad->InsertAttr(ATTR_JOB_CPU_BRANCH_INSTRUCTION_RATE, branch_perc);
+	}
+	if (usage->cpu_branch_misses >= 0 && usage->cpu_branch_instructions >= 0) {
+		float branch_miss = static_cast<float>(usage->cpu_branch_misses)/static_cast<float>(usage->cpu_branch_instructions);
+		ad->InsertAttr(ATTR_JOB_BRANCH_PREDICTION_MISS_RATE, branch_miss);
+	}
 
 		// Update our knowledge of how many processes the job has
 	num_pids = usage->num_procs;

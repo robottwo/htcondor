@@ -34,6 +34,10 @@
 
 extern int log_size;
 
+// Controls performance tracking configuration.
+extern int g_perf_tracking;
+extern int g_perf_restricted;
+
 // our "local server address"
 // (set with the "-A" option)
 //
@@ -124,7 +128,10 @@ usage(void)
 	"  -I <glexec-kill-path> <glexec-path> <glexec-retries> <glexec-retry-delay>\n"
 	"                         Specify the binary which will send a signal\n"
 	"                         to a pid and the glexec binary which will run\n"
-	"                         the program under the right priviledges.\n");
+	"                         the program under the right priviledges.\n"
+	"  -T <value>             Controls the performance tracking.\n"
+	"                         Setting value to \"off\" disables CPU-based\n"
+	"                         performance tracking.\n");
 }
 
 static inline void
@@ -153,6 +160,9 @@ fail_option_args(const char* option, int args_required)
 static void
 parse_command_line(int argc, char* argv[])
 {
+	g_perf_tracking = 1;
+	g_perf_restricted = 0;
+
 	int index = 1;
 	while (index < argc) {
 
@@ -296,7 +306,27 @@ parse_command_line(int argc, char* argv[])
 				glexec_retry_delay = atoi(argv[index]);
 				break;
 #endif
-
+			// perf tracking
+			//
+			case 'T':
+				if (index + 1 >= argc) {
+					fail_option_args("-T", 1);
+				}
+				index++;
+				if (strcmp(argv[index], "off") == 0)
+				{
+					g_perf_tracking = 0;
+				}
+				else if (strcmp(argv[index], "restricted") == 0)
+				{
+					g_perf_restricted = 1;
+				}
+				else
+				{
+					g_perf_tracking = 1;
+					g_perf_restricted = 0;
+				}
+				break;
 			// default case
 			//
 			default:

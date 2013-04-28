@@ -41,7 +41,7 @@ if (LINUX AND WANT_FULL_DEPLOYMENT)
 endif(LINUX AND WANT_FULL_DEPLOYMENT)
 
 if (HAVE_PERF_EVENT_H)
-condor_exe( procd_perf_stats_tester "procd_perf_stats_tester.cpp;procd_perf_stats.cpp"  "" "" OFF)
+condor_exe( procd_perf_stats_tester "procd_perf_stats_tester.cpp;procd_perf_stats.cpp"  "" "${LIBCGROUP_FOUND}" OFF)
 endif(HAVE_PERF_EVENT_H)
 
 set( PROCD_CLIENT_UTIL_SRCS "${ProcClientElements}" PARENT_SCOPE )

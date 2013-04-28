@@ -22,6 +22,8 @@
 #include "proc_family_member.h"
 #include "proc_family.h"
 
+extern int g_perf_tracking;
+
 void
 ProcFamilyMember::still_alive(procInfo* pi)
 {
@@ -55,6 +57,14 @@ ProcFamilyMember::move_to_subfamily(ProcFamily* subfamily)
 		m_next->m_prev = m_prev;
 	}
 
+	// Holy layering violation Batman!
+#ifdef HAVE_PERF_EVENT_H
+	if (g_perf_tracking && !m_family->m_perf_uses_cgroup)
+	{
+		m_family->m_perf.stop_tracking(m_proc_info->pid);
+	}
+#endif
+
 	// change ourself to the new family
 	m_family = subfamily;
 
@@ -65,4 +75,12 @@ ProcFamilyMember::move_to_subfamily(ProcFamily* subfamily)
 		m_family->m_member_list->m_prev = this;
 	}
 	m_family->m_member_list = this;
+
+#ifdef HAVE_PERF_EVENT_H
+	if ((subfamily->m_root_pid != 0) && g_perf_tracking && !subfamily->m_perf_uses_cgroup)
+	{
+		subfamily->m_perf.start_tracking(m_proc_info->pid);
+	}
+#endif
+
 }

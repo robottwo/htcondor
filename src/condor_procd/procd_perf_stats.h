@@ -19,13 +19,15 @@ class ProcdPerfTracker
 {
 public:
 
-    int start_tracking(std::string &cgroup);
-    int stop_tracking(std::string &cgroup);
+#if defined(HAVE_EXT_LIBCGROUP)
+    int start_tracking(const std::string &cgroup);
+    int stop_tracking(const std::string &cgroup);
+    int get_status(const std::string &cgroup, ProcFamilyUsage &usage);
+#endif
 
     int start_tracking(pid_t);
     int stop_tracking(pid_t);
 
-    int get_status(std::string &cgroup, ProcFamilyUsage &usage);
     int add_status(pid_t pid, ProcFamilyUsage &usage, procInfo *info);
     void zero_usage() {m_zero_next = true;}
 
@@ -36,7 +38,8 @@ public:
 private:
 
     ProcdPerfTracker()
-        : m_zero_next(true)
+        : m_zero_next(true),
+          m_cpu_count(-1)
     {}
 
     int setup_tracking(int id, int flags);
@@ -55,6 +58,7 @@ private:
     std::vector<pid_t> m_pids;
 
     bool m_zero_next;
+    int m_cpu_count;
 
     static ProcdPerfTracker *m_instance;
 };

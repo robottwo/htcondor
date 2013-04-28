@@ -25,6 +25,7 @@ static pthread_mutex_t g_cgroups_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define FREEZE_CONTROLLER_STR "freezer"
 #define BLOCK_CONTROLLER_STR "blkio"
 #define CPU_CONTROLLER_STR "cpu"
+#define PERF_CONTROLLER_STR "perf_event"
 
 #include <map>
 
@@ -42,8 +43,9 @@ public:
 		FREEZE_CONTROLLER = 4,
 		BLOCK_CONTROLLER = 8,
 		CPU_CONTROLLER = 16,
+		PERF_CONTROLLER = 32,
 		// Each time you add a new controller, increase ALL_CONTROLLERS accordingly
-		ALL_CONTROLLERS = 32-1,
+		ALL_CONTROLLERS = 64-1,
 	};
 
 	static CgroupManager &getInstance();

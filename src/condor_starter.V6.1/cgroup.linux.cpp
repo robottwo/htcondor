@@ -68,6 +68,8 @@ int CgroupManager::initialize()
 			m_cgroup_mounts |= (info.hierarchy != 0) ? BLOCK_CONTROLLER : NO_CONTROLLERS;
 		} else if (strcmp(info.name, CPU_CONTROLLER_STR) == 0) {
 			m_cgroup_mounts |= (info.hierarchy != 0) ? CPU_CONTROLLER : NO_CONTROLLERS;
+		} else if (strcmp(info.name, PERF_CONTROLLER_STR) == 0) {
+			m_cgroup_mounts |= (info.hierarchy != 0) ? PERF_CONTROLLER : NO_CONTROLLERS;
 		}
 		ret = cgroup_get_all_controller_next(&handle, &info);
 	}
@@ -86,6 +88,9 @@ int CgroupManager::initialize()
 	}
 	if (!isMounted(CPU_CONTROLLER)) {
 		dprintf(D_ALWAYS, "Cgroup controller for CPU is not available.\n");
+	}
+	if (!isMounted(PERF_CONTROLLER)) {
+		dprintf(D_ALWAYS, "Cgroup controller for performance events is not available.\n");
 	}
 	if (ret != ECGEOF) {
 		dprintf(D_ALWAYS, "Error iterating through cgroups mount information: %s\n", cgroup_strerror(ret));
@@ -116,7 +121,7 @@ int CgroupManager::initialize_controller(struct cgroup& cgroup, const Controller
 	}
 
 	if ((has_cgroup == false) || (cgroup_get_controller(&cgroup, controller_str) == NULL)) {
-                changed_cgroup = true;
+                //changed_cgroup = true;
                 if (cgroup_add_controller(&cgroup, controller_str) == NULL) {
                         dprintf(required ? D_ALWAYS : D_FULLDEBUG,
                                 "Unable to initialize cgroup %s controller.\n",
@@ -196,6 +201,13 @@ int CgroupManager::create(const std::string &cgroup_string, Cgroup &cgroup,
 		initialize_controller(*cgroupp, CPU_CONTROLLER,
 			CPU_CONTROLLER_STR,
 			required_controllers & CPU_CONTROLLER,
+			has_cgroup, changed_cgroup)) {
+		return -1;
+	}
+	if ((preferred_controllers & PERF_CONTROLLER) &&
+		initialize_controller(*cgroupp, PERF_CONTROLLER,
+			PERF_CONTROLLER_STR,
+			required_controllers & PERF_CONTROLLER,
 			has_cgroup, changed_cgroup)) {
 		return -1;
 	}

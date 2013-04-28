@@ -447,6 +447,18 @@ ProcFamilyProxy::start_procd()
 	}
 #endif
 
+	if (param_boolean("DISABLE_PERF_TRACKING", false)) {
+		args.AppendArg("-T");
+		args.AppendArg("off");
+	} else if (param_boolean("RESTRICTED_PERF_TRACKING", false)) {
+		args.AppendArg("-T");
+		args.AppendArg("restricted");
+		dprintf(D_ALWAYS, "Restricting the perf tracking capabilities.\n");
+	} else {
+		args.AppendArg("-T");
+		args.AppendArg("on");
+	}
+
 #if defined(LINUX)
 	// enable group-based tracking if a group ID range is given in the
 	// config file

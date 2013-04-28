@@ -34,6 +34,8 @@
 #define THAWED "THAWED"
 #define BLOCK_STATS_LINE_MAX 64
 
+int g_perf_tracking = 1;
+
 #include <unistd.h>
 long ProcFamily::clock_tick = sysconf( _SC_CLK_TCK );
 
@@ -55,7 +57,8 @@ ProcFamily::ProcFamily(ProcFamilyMonitor* monitor,
 	m_exited_user_cpu_time(0),
 	m_exited_sys_cpu_time(0),
 	m_max_image_size(0),
-	m_member_list(NULL)
+	m_member_list(NULL),
+	m_perf_uses_cgroup(false)
 #if defined(HAVE_EXT_LIBCGROUP)
 	, m_cgroup_string(""),
 	m_cm(CgroupManager::getInstance()),
@@ -94,6 +97,13 @@ ProcFamily::~ProcFamily()
 		delete member;
 		member = next_member;
 	}
+
+#ifdef HAVE_PERF_EVENT_H
+	if (g_perf_tracking && m_perf_uses_cgroup)
+	{
+		m_perf.stop_tracking(m_cgroup_string);
+	}
+#endif
 
 #if !defined(WIN32)
 	// delete the proxy if we've been given one
@@ -269,6 +279,20 @@ ProcFamily::set_cgroup(const std::string &cgroup_string)
 				m_cgroup_string.c_str(), m_root_pid, err, cgroup_strerror(err));
 		}
 	}
+
+	// Setup perf cgroup
+#ifdef HAVE_PERF_EVENT_H
+	if (g_perf_tracking && m_perf.start_tracking(m_cgroup_string) >= 0)
+	{
+		ProcFamilyMember* member = m_member_list;
+		while (member != NULL) {
+			if (member->m_proc_info) m_perf.stop_tracking(member->m_proc_info->pid);
+			member = member->m_next;
+		}
+		m_perf_uses_cgroup = true;
+		dprintf(D_ALWAYS, "Using perf_event controller for performance monitoring.\n");
+	}
+#endif
 
 	return 0;
 }
@@ -628,6 +652,14 @@ ProcFamily::aggregate_usage_cgroup(ProcFamilyUsage* usage)
 	// Update CPU
 	get_cpu_usage_cgroup(usage->user_cpu_time, usage->sys_cpu_time);
 
+	// Update performance counters
+#ifdef HAVE_PERF_EVENT_H
+	if (g_perf_tracking && m_perf_uses_cgroup)
+	{
+		m_perf.get_status(m_cgroup_string, *usage);
+	}
+#endif
+
 	aggregate_usage_cgroup_blockio(usage);
 
 	// Finally, update the list of tasks
@@ -712,7 +744,7 @@ ProcFamily::aggregate_usage(ProcFamilyUsage* usage)
 		}
 #endif
 #ifdef HAVE_PERF_EVENT_H
-		if (member->m_proc_info && usage)
+		if (member->m_proc_info && usage && g_perf_tracking && !m_perf_uses_cgroup)
 		{
 			if (m_perf.add_status(member->m_proc_info->pid, *usage, member->m_proc_info) < 0)
 			{
@@ -802,7 +834,7 @@ ProcFamily::add_member(procInfo* pi)
 	m_member_list = member;
 
 #ifdef HAVE_PERF_EVENT_H
-	if (m_root_pid != 0)
+	if ((m_root_pid != 0) && g_perf_tracking && !m_perf_uses_cgroup)
 	{
 		m_perf.start_tracking(member->m_proc_info->pid);
 	}
@@ -876,7 +908,10 @@ ProcFamily::remove_exited_processes()
 				member->m_proc_info->cpu_branch_instructions;
 			m_exited_cpu_branch_misses +=
 				member->m_proc_info->cpu_branch_misses;
-			m_perf.stop_tracking(member->m_proc_info->pid);
+			if (g_perf_tracking && !m_perf_uses_cgroup)
+			{
+				m_perf.stop_tracking(member->m_proc_info->pid);
+			}
 #endif
 			// keep our monitor's hash table up to date!
 			//
