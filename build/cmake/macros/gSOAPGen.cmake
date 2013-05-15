@@ -55,7 +55,7 @@ if ( HAVE_EXT_GSOAP )
 	add_custom_command(
 		OUTPUT ${${_DAEMON}_SOAP_ENV}
 		COMMAND ${SOAPCPP2}
-		ARGS -psoap_env_${_DAEMON} ${CMAKE_CURRENT_SOURCE_DIR}/../condor_daemon_core.V6/soapEnv.h
+		ARGS -psoap_env_${_DAEMON} -S -L -x ${CMAKE_CURRENT_SOURCE_DIR}/../condor_daemon_core.V6/soapEnv.h
 		COMMENT "Generating ${_DAEMON} soap dependencies" )
 
 	add_custom_target(
