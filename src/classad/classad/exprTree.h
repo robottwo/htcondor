@@ -82,7 +82,9 @@ class ExprTree
 			/// Expression list node 
 			EXPR_LIST_NODE,
 			/// Expression envelope.
-			EXPR_ENVELOPE
+			EXPR_ENVELOPE,
+			/// Compact expression
+			COMPACT_EXPR
 		};
 
 		/// Virtual destructor

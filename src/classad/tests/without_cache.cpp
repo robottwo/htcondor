@@ -101,6 +101,9 @@ BOOST_AUTO_TEST_CASE( example_test )
     cout<<"Clock Time:"<<(1.0*(clock() - Start))/CLOCKS_PER_SEC<<endl;
     inputData.clear();
 #endif
+
+    sleep(4);
+
     ads.clear();
 
     BOOST_CHECK_NO_THROW(); 

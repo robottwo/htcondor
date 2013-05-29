@@ -33,7 +33,6 @@
 using namespace std;
 using namespace classad;
 
-
 /////////////////////////////////////////////////////////////////
 // State Space for tests: 
 //
@@ -61,27 +60,38 @@ BOOST_AUTO_TEST_CASE( example_test )
     ifstream infile;
     
     infile.open ("testdata.txt");
-    
+
+    cout << "Size of cached expr: " << sizeof(CachedExprEnvelope) << endl;
+    cout << "Size of shared ptr " << sizeof(pCacheData) << endl;
+
 #if 1
     clock_t Start = clock();
 
+    unsigned count = 0;
     while ( !infile.eof() )
     {
        getline( infile, szInput );
 
-        // This is the end of an add.
+        // This is the end of an ad.
         if (!szInput.length())
         {
             ads.push_back(pAd);
+            pAd->getAttrList().shrink_to_fit();
             pAd.reset( new ClassAd );
         }
         else if ( !pAd->Insert(szInput) )
         {
-            cout<<"BARFED ON:"<<szInput<<endl;
+            /*cout<<"BARFED ON:"<<szInput<<endl;
             throw std::exception();
-        }
+        */}
+        count++;
     }
     
+    ads.shrink_to_fit();
+    ShortAttrLookup &g_attrVector = classad::GetAttrVector();
+    cout << "Attribute count " << count << endl;
+    cout << "Attr vector size: " << g_attrVector.size() << endl;
+    cout << "ClassAd count " << ads.size() << endl;
     cout<<"Clock Time:"<<(1.0*(clock() - Start))/CLOCKS_PER_SEC<<endl;
 
     infile.close();
@@ -105,17 +115,18 @@ BOOST_AUTO_TEST_CASE( example_test )
             pAd.reset( new ClassAd );
         }
         else if ( !pAd->Insert(inputData[iCtr]) )
-        {
+        {/*
             cout<<"BARFED ON:"<<inputData[iCtr]<<endl;
             throw std::exception();
-        }
+        */}
     }
-    
     cout<<"Clock Time:"<<(1.0*(clock() - Start))/CLOCKS_PER_SEC<<endl;
     inputData.clear();
 #endif
     // enable this to look at the cache contents and debug data
     CachedExprEnvelope::_debug_dump_keys("output.txt");
+
+    sleep(4);
     
     ads.clear();
     

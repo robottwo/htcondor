@@ -19,6 +19,7 @@
 #include "classad/classadCache.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <list>
 
 #ifdef WIN32
@@ -40,11 +41,8 @@ class ClassAdCache
 {
 protected:
     
-        typedef classad_unordered<std::string, pCacheEntry> AttrValues;
-        typedef classad_unordered<std::string, pCacheEntry>::iterator value_iterator;
-        
-	typedef classad_unordered<std::string, AttrValues, ClassadAttrNameHash, CaseIgnEqStr> AttrCache;
-	typedef classad_unordered<std::string, AttrValues, ClassadAttrNameHash, CaseIgnEqStr>::iterator cache_iterator;
+	typedef classad_unordered<CacheKey*, pCacheEntry, CacheKeyHash, CacheKeyEq> AttrCache;
+	typedef AttrCache::iterator cache_iterator;
 
 	AttrCache m_Cache;		///< Data Store
 	unsigned long m_HitCount;	///< Hit Counter
@@ -71,53 +69,46 @@ public:
 #endif
 	{
 		pCacheData pRet;
+		CompactExpr packer;
+                bool canPack = pVal; if (canPack) packer.Pack(*pVal);
+		std::string qString = (canPack ? packer.getData() : szValue);
+		//printf("Leaking packed string of size %lu\n", qString.size());
+		//std::string *leak_str = new std::string(qString);
+		//delete pVal;
+		//return NULL;
+		//if (!pVal) return NULL; else {delete pVal; return NULL;}
+		//else {delete pVal; return NULL;}
+		CacheEntry *entry = new CacheEntry(szName, qString, canPack ? NULL : pVal );
+		CacheKey *key = entry->getKey();
+		cache_iterator itr = m_Cache.find(key);
 		
-		cache_iterator itr = m_Cache.find(szName);
-                bool bValidName=false;
 		
 		if ( itr != m_Cache.end() ) 
 		{
-                  bValidName = true;
-                  value_iterator vtr = itr->second.find(szValue);
-                 #ifndef WIN32 // this just wastes time on windows
-                  szName = itr->first;
-                 #endif
-
-                  // check the value cache
-                  if (vtr != itr->second.end())
-                  {
-                    pRet = vtr->second.lock();
+                    pRet = itr->second.lock();
                     
                     m_HitCount++;
+		    std::string key_val; key_val.reserve(key->getLength()); key_val.replace(0, key->getOffset(), key->getData(), key->getOffset());
+		    printf("Hit count: %lu, value size %u, key: %s\n", m_HitCount, key->getLength() - key->getOffset(), key_val.c_str());
+                    delete entry;
                     if (pVal)
                     {
                         delete pVal;
                     }
                     
-                    // don't to any more checks just return.
+                    // don't do any more checks just return.
                     return pRet;
-                    
-                  }
-                  
 		} 
 		
 		// if we got here we missed 
                 if (pVal)
                 {
-                    pRet.reset( new CacheEntry(szName,szValue,pVal) );
-
-                    if (bValidName)
-                    {
-                        itr->second[szValue] = pRet;
-                    }
-                    else
-                    {
-                        AttrValues vCache;
-                        vCache[szValue] = pRet;
-                        m_Cache[szName] = vCache;
-                    }
+                    if (canPack) {delete pVal;}
+                    pRet.reset(entry);
+                    m_Cache[key] = pRet;
 
                     m_MissCount++;
+		    printf("Miss count: %lu\n", m_MissCount);
                 }
                 else
                 {
@@ -130,6 +121,7 @@ public:
 	///< clears a cache key
 	bool flush(const std::string & szName, const std::string & szValue)
 	{
+/*
 	  cache_iterator itr = m_Cache.find(szName);
 
       if (itr != m_Cache.end())
@@ -147,16 +139,28 @@ public:
 		  m_RemovalCount++;
 		  return (true);
 	  }
-
+*/
 	  return false;
 	} 
+
+	bool flush(CacheKey *key)
+	{
+		cache_iterator itr = m_Cache.find(key);
+		if (itr != m_Cache.end())
+		{
+			m_Cache.erase(itr);
+			m_RemovalCount++;
+			return true;
+		}
+		return false;
+	}
 	
 	///< dumps the contents of the cache to the file
 	bool dump_keys(const std::string & szFile)
 	{
 	  FILE * fp = fopen ( szFile.c_str(), "a+" );
 	  bool bRet = false;
-
+/*
 	  if (fp)
 	  {
 	    double dHitRatio = (m_HitCount/ ((double)m_HitCount+m_MissCount))*100;
@@ -206,7 +210,7 @@ public:
 	    bRet = true;
 
 	  }
-
+*/
 	  return (bRet);
 	}
 
@@ -229,7 +233,7 @@ public:
 			dHitRatio = (100.0 * m_HitCount) / dTot;
 			dMissRatio = (100.0 * m_MissCount) / dTot;
 		}
-
+/*
 		cache_iterator itr = m_Cache.begin();
 		while (itr != m_Cache.end())
 		{
@@ -256,7 +260,7 @@ public:
 			++cAttribs;
 			itr++;
 		}
-
+*/
 		fprintf( fp, "Attribs: %lu SingleUseAttribs: %lu AttribsWithOnlySingletons: %lu\n",  cAttribs, cSingletonAttribs, cAttribsWithOnlySingletonValues);
 		fprintf( fp, "Values: %lu SingleUseValues: %lu UseCountTot:%lu UseCountMax: %lu\n", cTotalValues, cSingletonValues, cTotalUseCount, cMaxUseCount);
 		fprintf( fp, "Hits:%lu (%.2f%%) Misses: %lu (%.2f%%) QueryMiss: %lu\n", m_HitCount,dHitRatio,m_MissCount,dMissRatio,m_MissCheck ); 
@@ -264,8 +268,45 @@ public:
 
 };
 
-
 static classad_shared_ptr<ClassAdCache> _cache;
+
+CacheKey::CacheKey(const std::string &name, const std::string &val)
+{
+    m_offset = name.size();
+    m_length = m_offset + val.size();
+    m_data = new char[m_length];
+    memcpy(m_data, name.c_str(), m_offset);
+    memcpy(m_data+m_offset, val.c_str(), val.size());
+}
+
+CacheKey::~CacheKey()
+{
+    _cache->flush(this);
+    delete m_data;
+}
+
+size_t
+CacheKeyHash::operator()( const CacheKey *s ) const
+{
+    size_t h = 0;
+    unsigned char const *ch = (unsigned const char*)s->m_data;
+    for( unsigned idx=0; idx<s->m_length; idx++ ) {
+        h = 5*h + (*ch | 0x20);
+        ch++;
+    }
+    return h;
+}
+
+bool
+CacheKeyEq::operator()(const CacheKey *s1, const CacheKey *s2) const
+{
+    if (s1->m_offset != s2->m_offset) return false;
+    if (s1->m_length != s2->m_length) return false;
+    if (strncasecmp(s1->m_data, s2->m_data, s1->m_offset) != 0) return false;
+    if (memcmp(s1->m_data+s1->m_offset, s2->m_data+s2->m_offset, s2->m_length-s2->m_offset) != 0) return false;
+    return true;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -274,25 +315,34 @@ static classad_shared_ptr<ClassAdCache> _cache;
 //////////////////////////////////////////////////////////////////////////////
 
 CacheEntry::CacheEntry()
+    : m_key("", "")//,
+      //pData(NULL)
 {
-	pData=0;
 }
 
-CacheEntry::CacheEntry(const std::string & szNameIn, const std::string & szValueIn, ExprTree * pDataIn)
+CacheEntry::CacheEntry(const std::string &szName, const std::string &szValue, ExprTree * pDataIn)
+    : m_key(szName, szValue)//,
+      //pData(pDataIn)
 {
-    szName = szNameIn;
-    szValue = szValueIn;
-    pData = pDataIn;
+    //if (pDataIn) pData = pDataIn;
+    //else pData = NULL;
 }
 
 CacheEntry::~CacheEntry()
 {
-    if (pData)
+/*
+    if (bExpr && pData)
     {
         _cache->flush(szName, szValue);
-		delete pData;
+        delete pData;
         pData=0;
     }
+    else if (!bExpr)
+    {
+        _cache->flush(szName, szValue);
+        cExpr.~CompactExpr();
+    }
+*/
 }
 
 CachedExprEnvelope::~CachedExprEnvelope()
@@ -343,6 +393,8 @@ ExprTree * CachedExprEnvelope::cache (const std::string & pName, const std::stri
 
 	    pNewEnv->m_pLetter = _cache->cache(pName, *pszValue, pTree);
 	    pRet = pNewEnv;
+            //delete pNewEnv;
+            //pRet = NULL;
 	  }
 	}
 	
@@ -368,8 +420,8 @@ CachedExprEnvelope * CachedExprEnvelope::check_hit (string & szName, const strin
    {
 	_cache.reset(new ClassAdCache());
    }
-
    pCacheData cache_check = _cache->cache( szName, szValue, 0);
+   return 0;
 
    if (cache_check)
    {
@@ -385,7 +437,9 @@ void CachedExprEnvelope::getAttributeName(std::string & szFillMe)
 {
     if (m_pLetter)
     {
-        szFillMe = m_pLetter->szName;
+        CacheKey *key = m_pLetter->getKey();
+        szFillMe.reserve(key->m_length);
+        szFillMe.replace(0, key->m_length, key->m_data);
     }
 }
 
@@ -395,10 +449,23 @@ ExprTree * CachedExprEnvelope::get()
 	
 	if (m_pLetter)
 	{
-		pRet = m_pLetter->pData;
+		//pRet = m_pLetter->pData;
 	}
 	
 	return ( pRet );
+}
+
+std::string CachedExprEnvelope::getPacked()
+{
+	std::string results;
+	if (!m_pLetter /*|| m_pLetter->pData*/) return results;
+	char * key_data = m_pLetter->m_key.m_data;
+	unsigned off = m_pLetter->m_key.m_offset;
+	key_data += off;
+	unsigned length = m_pLetter->m_key.m_length - m_pLetter->m_key.m_offset;
+	results.reserve(length+1); results[length] = '\0';
+	results.replace(0, length, key_data, length);
+	return results;
 }
 
 ExprTree * CachedExprEnvelope::Copy( ) const
@@ -415,7 +482,7 @@ ExprTree * CachedExprEnvelope::Copy( ) const
 
 const ExprTree* CachedExprEnvelope::self() const
 {
-	return m_pLetter->pData;
+	return NULL;//m_pLetter->pData;
 }
 
 /* This version is for shared-library compatibility.
@@ -423,7 +490,7 @@ const ExprTree* CachedExprEnvelope::self() const
  */
 const ExprTree* CachedExprEnvelope::self()
 {
-	return m_pLetter->pData;
+	return NULL; //m_pLetter->pData;
 }
 
 void CachedExprEnvelope::_SetParentScope( const ClassAd* )
@@ -434,11 +501,11 @@ void CachedExprEnvelope::_SetParentScope( const ClassAd* )
 bool CachedExprEnvelope::SameAs(const ExprTree* tree) const
 {
 	bool bRet = false;
-	
+	/*
 	if (tree && m_pLetter && m_pLetter->pData)
 	{
 		bRet = m_pLetter->pData->SameAs(((ExprTree*)tree)->self()) ;
-	}
+	}*/
 
 	return bRet;
 }
@@ -447,14 +514,14 @@ bool CachedExprEnvelope::isClassad( ClassAd ** ptr )
 {
 	bool bRet = false;
 	
-	if (m_pLetter && m_pLetter->pData && CLASSAD_NODE == m_pLetter->pData->GetKind() )
+	/*if (m_pLetter && m_pLetter->pData && CLASSAD_NODE == m_pLetter->pData->GetKind() )
 	{
 		if (ptr)
 		{
 			*ptr = (ClassAd *) m_pLetter->pData;
 		}
 		bRet = true;
-	}
+	}*/
 	
 	return bRet;
 }
@@ -464,10 +531,10 @@ bool CachedExprEnvelope::_Evaluate( EvalState& st, Value& v ) const
 {
 	bool bRet = false;
 	
-	if (m_pLetter && m_pLetter->pData)
+	/*if (m_pLetter && m_pLetter->pData)
 	{
 		bRet = m_pLetter->pData->Evaluate(st,v);
-	}
+	}*/
 
 	return bRet;
 }
@@ -476,10 +543,10 @@ bool CachedExprEnvelope::_Evaluate( EvalState& st, Value& v, ExprTree*& t) const
 {
 	bool bRet = false;
 	
-	if (m_pLetter && m_pLetter->pData)
+	/*if (m_pLetter && m_pLetter->pData)
 	{
 		bRet = m_pLetter->pData->Evaluate(st,v,t);
-	}
+	}*/
 
 	return bRet;
 	
@@ -489,10 +556,10 @@ bool CachedExprEnvelope::_Flatten( EvalState& st, Value& v, ExprTree*& t, int* i
 {
 	bool bRet = false;
 	
-	if (m_pLetter && m_pLetter->pData)
+	/*if (m_pLetter && m_pLetter->pData)
 	{
 		bRet = m_pLetter->pData->Flatten(st,v,t,i);
-	}
+	}*/
 
 	return bRet;
 	

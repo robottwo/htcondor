@@ -38,8 +38,38 @@ typedef std::map<const ClassAd*, References> PortReferences;
 #include "classad/rectangle.h"
 #endif
 
-typedef classad_unordered<std::string, ExprTree*, ClassadAttrNameHash, CaseIgnEqStr> AttrList;
-typedef std::set<std::string, CaseIgnLTStr> DirtyAttrList;
+class CacheEntry;
+
+struct ClassAdNVP {
+    short first;
+    char m_flags;
+    char m_data[5];
+    union ClassAdData {
+        char m_rest[16];
+        classad_shared_ptr<CacheEntry> second;
+        ClassAdData() {bzero(m_rest, 16);}
+        ~ClassAdData() {}
+    } _m;
+
+    void swap(ClassAdNVP &other)
+    {if (m_flags) {std::swap(_m.m_rest, other._m.m_rest);}
+     else {_m.second.swap(other._m.second);} // TODO: handle case where flags are different for different objects.
+     std::swap(first, other.first); std::swap(m_flags, other.m_flags);
+     std::swap(m_data, other.m_data);
+    }
+    ClassAdNVP(short, ExprTree *);
+    ClassAdNVP(const ClassAdNVP &other) {m_flags = other.m_flags; memcpy(m_data, other.m_data, 5); if (m_flags){memcpy(_m.m_rest, other._m.m_rest, 16);} else {_m.second = other._m.second;}}
+    ~ClassAdNVP() {if (!m_flags) {_m.second.reset();}}
+    ClassAdNVP & operator = (ClassAdNVP other) {swap(other); return *this;}
+};
+
+typedef std::vector<ClassAdNVP> AttrList;
+typedef std::vector<std::string> ShortAttrLookup;
+typedef classad_unordered<std::string, short, ClassadAttrNameHash, CaseIgnEqStr> AttrShortLookup;
+
+ShortAttrLookup & GetAttrVector();
+
+typedef std::vector<short> DirtyAttrList;
 
 void ClassAdLibraryVersion(int &major, int &minor, int &patch);
 void ClassAdLibraryVersion(std::string &version_string);
@@ -717,6 +747,8 @@ e		*/
 		 * Expect alternateScope to be removed from a future release.
 		 */
 		ClassAd *alternateScope;
+
+		AttrList & getAttrList() { return attrList; }
 
   	private:
 		friend 	class AttributeReference;

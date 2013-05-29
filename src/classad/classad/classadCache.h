@@ -20,21 +20,56 @@
 #define __CLASSAD_CACHE_H__
 
 #include "classad/exprTree.h"
+#include "classad/compactExpr.h"
 #include <string>
 
 namespace classad {
 
+struct CacheKeyHash;
+struct CacheKeyEq;
+class  CachedExprEnvelope;
+
+class CacheKey
+{
+    friend struct CacheKeyHash;
+    friend struct CacheKeyEq;
+    friend class CachedExprEnvelope;
+
+public:
+    CacheKey(const std::string &name, const std::string &val);
+    ~CacheKey();
+    unsigned getLength() const {return m_length;}
+    unsigned getOffset() const {return m_offset;}
+    const char * getData() const {return m_data;}
+
+private:
+    char * m_data;
+    unsigned m_offset;
+    unsigned m_length;
+};
+
+struct CacheKeyHash{
+    size_t operator()( const CacheKey* ) const;
+};
+
+struct CacheKeyEq {
+     bool operator()( const CacheKey *s1, const CacheKey *s2 ) const;
+};
+
 class CacheEntry
 {
+    friend class CachedExprEnvelope;
+
 public: 
     CacheEntry();
-    CacheEntry(const std::string & szNameIn, const std::string & szValueIn, ExprTree * pDataIn);
-    virtual ~CacheEntry();
+    CacheEntry(const std::string &szName, const std::string &szValue, ExprTree * pDataIn);
+    ~CacheEntry();
 
-    std::string szName;    // string space the names.
-    std::string szValue;   // reference back for cleanup
-    ExprTree * pData;
+    CacheKey *getKey() {return &m_key;}
 
+private:
+    CacheKey  m_key;
+    //ExprTree *pData;
 };
 
 typedef classad_weak_ptr< CacheEntry > pCacheEntry;
@@ -73,12 +108,15 @@ public:
 	static void _debug_print_stats(FILE* fp);
 	
 	ExprTree * get();
+	std::string getPacked();
 
 	/**
 	 * Used to obtain the string 
 	 */
 	void getAttributeName(std::string & szFillMe);
-	
+
+	pCacheData getData() const {return m_pLetter;}
+
 protected:
 	
 	CachedExprEnvelope(){;};

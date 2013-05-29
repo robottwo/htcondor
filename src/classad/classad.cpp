@@ -30,6 +30,41 @@ extern "C" void to_lower (char *);	// from util_lib (config.c)
 
 namespace classad {
 
+AttrShortLookup g_attrMap;
+ShortAttrLookup g_attrVector;
+ShortAttrLookup &GetAttrVector()
+{
+    return g_attrVector;
+}
+
+ClassAdNVP::ClassAdNVP(short idx, ExprTree * expr)
+    : first(idx),
+      m_flags(0)
+{
+    _m.second = NULL;
+    if (expr)
+    {
+        CompactExpr ce;
+        if (!ce.Pack(*expr)) {printf("Unable to pack.\n");}
+        std::string data = ce.getData();
+        size_t size = data.size();
+        if (size <= 5 + 16)
+        {
+            memcpy(m_data, data.c_str(), size);
+            m_flags = 1;
+            printf("packing NVP\n");
+            delete expr;
+        }
+        else
+        {
+            printf("Expression too big %lu\n", size);
+            CachedExprEnvelope *new_expr = static_cast<CachedExprEnvelope *>(expr);
+            _m.second = new_expr->getData();
+            delete new_expr;
+        }
+    }
+}
+
 // This flag is only meant for use in Condor, which is transitioning
 // from an older version of ClassAds with slightly different evaluation
 // semantics. It will be removed without warning in a future release.
@@ -72,7 +107,8 @@ ClassAd::
 ClassAd ()
 {
 	nodeKind = CLASSAD_NODE;
-	EnableDirtyTracking();
+	//EnableDirtyTracking();
+	DisableDirtyTracking();
 	chained_parent_ad = NULL;
 	alternateScope = NULL;
 }
@@ -116,20 +152,24 @@ CopyFrom( const ClassAd &ad )
 		alternateScope = ad.alternateScope;
 		
 		this->do_dirty_tracking = false;
+/*
 		for( itr = ad.attrList.begin( ); itr != ad.attrList.end( ); itr++ ) {
-			if( !( tree = itr->second->Copy( ) ) ) {
+			if( !( tree = itr->_m.second->Copy( ) ) ) {
 				Clear( );
 				CondorErrno = ERR_MEM_ALLOC_FAILED;
 				CondorErrMsg = "";
                 succeeded = false;
                 break;
+			}*/
+			/*AttrShortLookup::iterator gitr = g_attrMap.find(itr->first);
+			int idx;
+			if (gitr = g_attrMap.end()) {g_attrVector.push_back(itr->first); g_attrMap[itr->first] = g_attrVector.size(); idx=g_attrVector.size()}
+			else idx = gitr->second;*/
+			/*Insert(g_attrVector[itr->first], tree, false);
+			if (ad.do_dirty_tracking && ad.IsAttributeDirty(g_attrVector[itr->first])) {
+				dirtyAttrList.push_back(itr->first);
 			}
-			
-			Insert(itr->first, tree, false);
-			if (ad.do_dirty_tracking && ad.IsAttributeDirty(itr->first)) {
-				dirtyAttrList.insert(itr->first);
-			}
-		}
+		}*/
 
 		do_dirty_tracking = ad.do_dirty_tracking;
 	}
@@ -184,8 +224,8 @@ SameAs(const ExprTree *tree) const
                ExprTree *this_tree;
                ExprTree *other_tree;
 
-               this_tree = itr->second;
-               other_tree = other_classad->Lookup(itr->first);
+               //this_tree = itr->_m.second;
+               other_tree = other_classad->Lookup(g_attrVector[itr->first]);
                if (other_tree == NULL) {
                    is_same = false;
                    break;
@@ -218,7 +258,7 @@ Clear( )
 	Unchain();
 	AttrList::iterator	itr;
 	for( itr = attrList.begin( ); itr != attrList.end( ); itr++ ) {
-		if( itr->second ) delete itr->second;
+		//if( itr->_m.second ) delete itr->_m.second;
 	}
 	attrList.clear( );
 }
@@ -230,7 +270,7 @@ GetComponents( vector< pair< string, ExprTree* > > &attrs ) const
 	for( AttrList::const_iterator itr=attrList.begin(); itr!=attrList.end(); 
 		itr++ ) {
 			// make_pair is a STL function
-		attrs.push_back( make_pair( itr->first, itr->second ) );
+		//attrs.push_back( make_pair( g_attrVector[itr->first], itr->_m.second ) );
 	}
 }
 
@@ -448,7 +488,7 @@ bool ClassAd::Insert( const std::string& serialized_nvp)
     // here is the special logic to check
     CachedExprEnvelope * cache_check = NULL;
 	if ( doExpressionCaching ) {
-		cache_check = CachedExprEnvelope::check_hit( name, szValue );
+		//cache_check = CachedExprEnvelope::check_hit( name, szValue );
 	}
     if ( cache_check ) 
     {
@@ -528,22 +568,30 @@ bool ClassAd::Insert( const std::string& attrName, ExprTree *& pRef, bool cache 
 	  // what goes in may be destroyed in preference for cache.
 	  pRef = (ExprTree *)tree->self(); 
 	}
-	
+	printf("New expr tree: %p\n", tree);
 	if (tree)
 	{
 		
 		// parent of the expression is this classad
 		tree->SetParentScope( this );
-				
+
+                AttrShortLookup::iterator gitr = g_attrMap.find(*pstrAttr);
+                short idx;
+                if (gitr == g_attrMap.end()) {g_attrVector.push_back(*pstrAttr); g_attrMap[*pstrAttr] = g_attrVector.size(); idx=g_attrVector.size();}
+                else idx = gitr->second;
+/*	
 		pair<AttrList::iterator,bool> insert_result =
-			attrList.insert( AttrList::value_type(*pstrAttr,tree) );
+			attrList.insert( AttrList::value_type(idx,tree) );
 
 		if( !insert_result.second ) {
 				// replace existing value
 			delete insert_result.first->second;
 			insert_result.first->second = tree;
 		}
+*/
 
+		attrList.emplace_back(ClassAdNVP(idx, tree));
+		//attrList.emplace_back(std::make_pair(idx, tree));
 		MarkAttributeDirty(*pstrAttr);
 
 		bRet = true;
@@ -566,13 +614,27 @@ DeepInsert( ExprTree *scopeExpr, const string &name, ExprTree *tree )
 ClassAd::iterator ClassAd::
 find(string const& attrName)
 {
-    return attrList.find(attrName);
+    AttrShortLookup::iterator gitr = g_attrMap.find(attrName);
+    if (gitr == g_attrMap.end()) return attrList.end();
+    //return attrList.find(gitr->second);
+    for( auto it = attrList.begin(); it != attrList.end(); it++ )
+    {
+        if (gitr->second == it->first) return it;
+    }
+    return attrList.end();
 }
  
 ClassAd::const_iterator ClassAd::
 find(string const& attrName) const
 {
-    return attrList.find(attrName);
+    AttrShortLookup::const_iterator gitr = g_attrMap.find(attrName);
+    if (gitr == g_attrMap.end()) return attrList.end();
+    //return attrList.find(gitr->second);
+    for( auto it = attrList.begin(); it != attrList.end(); it++ )
+    {
+        if (gitr->second == it->first) return it;
+    }
+    return attrList.end();
 }
 // --- end STL-like functions
 
@@ -583,9 +645,10 @@ Lookup( const string &name ) const
 	ExprTree *tree;
 	AttrList::const_iterator itr;
 
-	itr = attrList.find( name );
+	//itr = attrList.find( name );
+	itr = find(name);
 	if (itr != attrList.end()) {
-		tree = itr->second;
+		//tree = itr->_m.second;
 	} else if (chained_parent_ad != NULL) {
 		tree = chained_parent_ad->Lookup(name);
 	} else {
@@ -672,9 +735,9 @@ Delete( const string &name )
 	bool deleted_attribute;
 
     deleted_attribute = false;
-	AttrList::iterator itr = attrList.find( name );
+	AttrList::iterator itr = find( name );
 	if( itr != attrList.end( ) ) {
-		delete itr->second;
+		//delete itr->_m.second;
 		attrList.erase( itr );
 		deleted_attribute = true;
 	}
@@ -720,9 +783,9 @@ Remove( const string &name )
 	ExprTree *tree;
 
 	tree = NULL;
-	AttrList::iterator itr = attrList.find( name );
+	AttrList::iterator itr = find( name );
 	if( itr != attrList.end( ) ) {
-		tree = itr->second;
+		//tree = itr->_m.second;
 		attrList.erase( itr );
 		tree->SetParentScope( NULL );
 	}
@@ -769,10 +832,10 @@ Update( const ClassAd& ad )
 {
 	AttrList::const_iterator itr;
 	for( itr=ad.attrList.begin( ); itr!=ad.attrList.end( ); itr++ ) {
-		ExprTree * cpy = itr->second->Copy();
-		if(!Insert( itr->first, cpy, false)) {
+		//ExprTree * cpy = itr->_m.second->Copy();
+		/*if(!Insert( g_attrVector[itr->first], cpy, false)) {
 			return false;
-		}
+		}*/
 	}
 	return true;
 }
@@ -877,13 +940,13 @@ Copy( ) const
 
 	AttrList::const_iterator	itr;
 	for( itr=attrList.begin( ); itr != attrList.end( ); itr++ ) {
-		if( !( tree = itr->second->Copy( ) ) ) {
+		/*if( !( tree = itr->_m.second->Copy( ) ) ) {
 			delete newAd;
 			CondorErrno = ERR_MEM_ALLOC_FAILED;
 			CondorErrMsg = "";
 			return( NULL );
-		}
-		newAd->Insert(itr->first,tree,false);
+		}*/
+		newAd->Insert(g_attrVector[itr->first],tree,false);
 	}
 	newAd->EnableDirtyTracking();
 	return newAd;
@@ -922,13 +985,13 @@ _Flatten( EvalState& state, Value&, ExprTree*& tree, int* ) const
 
 	for( itr = attrList.begin( ); itr != attrList.end( ); itr++ ) {
 		// flatten expression
-		if( !itr->second->Flatten( state, eval, etree ) ) {
+		/*if( !itr->_m.second->Flatten( state, eval, etree ) ) {
 			delete newAd;
 			tree = NULL;
 			eval.Clear();
 			state.curAd = oldAd;
 			return false;
-		}
+		}*/
 
 		// if a value was obtained, convert it to a literal
 		if( !etree ) {
@@ -941,7 +1004,9 @@ _Flatten( EvalState& state, Value&, ExprTree*& tree, int* ) const
 				return false;
 			}
 		}
-		newAd->attrList[itr->first] = etree;
+		//newAd->attrList[itr->first] = etree;
+		//newAd->attrList.emplace_back(std::make_pair(itr->first, etree));
+		newAd->attrList.emplace_back(ClassAdNVP(itr->first, etree));
 		eval.Clear( );
 	}
 
@@ -1972,7 +2037,7 @@ NextAttribute( string &attr, const ExprTree *&expr )
 	itr++;
 	if( itr==ad->attrList.end( ) ) return( false );
 	attr = itr->first;
-	expr = itr->second;
+	//expr = itr->_m.second;
 	return( true );
 }
 
@@ -1983,7 +2048,7 @@ CurrentAttribute (string &attr, const ExprTree *&expr) const
 	if (!ad ) return( false );
 	if( itr==ad->attrList.end( ) ) return( false );
 	attr = itr->first;
-	expr = itr->second;
+	//expr = itr->_m.second;
 	return true;	
 }
 
@@ -2009,21 +2074,21 @@ int ClassAd::PruneChildAd()
 	
 		while (itr != attrList.end() )
 		{
-			tree = chained_parent_ad->Lookup(itr->first);
+			tree = chained_parent_ad->Lookup(g_attrVector[itr->first]);
 				
-			if(  tree && tree->SameAs(itr->second) ) {
+			/*if(  tree && tree->SameAs(itr->_m.second) ) {
 				AttrList::const_iterator rm_itr = itr;
 				itr++; // once 
 				// 1st remove from dirty list
-				MarkAttributeClean(rm_itr->first);
-				delete rm_itr->second;
-				attrList.erase( rm_itr->first );
+				MarkAttributeClean(g_attrVector[rm_itr->first]);
+				delete rm_itr->_m.second;
+				//attrList.erase( rm_itr->first );
 				iRet++;
 			}
 			else
 			{
 				itr++;
-			}
+			}*/
 		}
 	}
 	
@@ -2050,7 +2115,7 @@ void ClassAd::ClearAllDirtyFlags(void)
 void ClassAd::MarkAttributeDirty(const string &name)
 {
 	if (do_dirty_tracking) {
-		dirtyAttrList.insert(name);
+		dirtyAttrList.push_back(g_attrMap[name]);
 	}
 	return;
 }
@@ -2058,7 +2123,7 @@ void ClassAd::MarkAttributeDirty(const string &name)
 void ClassAd::MarkAttributeClean(const string &name)
 {
 	if (do_dirty_tracking) {
-		dirtyAttrList.erase(name);
+	//	dirtyAttrList.erase(g_attrMap[name]);
 	}
 	return;
 }
@@ -2066,12 +2131,12 @@ void ClassAd::MarkAttributeClean(const string &name)
 bool ClassAd::IsAttributeDirty(const string &name) const
 {
 	bool is_dirty;
-
-	if (dirtyAttrList.find(name) != dirtyAttrList.end()) {
+/*
+	if (dirtyAttrList.find(g_attrMap[name]) != dirtyAttrList.end()) {
 		is_dirty = true;
 	} else {
 		is_dirty = false;
-	}
+	}*/
 	return is_dirty;
 }
 

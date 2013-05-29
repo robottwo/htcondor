@@ -71,7 +71,7 @@ condor_pre_external( CLASSADS classads-${PACKAGE_VERSION} "lib;include" "alwaysb
 
 if (NOT WINDOWS)
 
-  condor_selective_glob("attrrefs.*;classad.*;classadCache.*;collection.*;collectionBase.*;debug.*;exprList.*;exprTree.*;fnCall.*;indexfile.*;lexer.*;lexerSource.*;literals.*;matchClassad.*;operators.*;query.*;sink.*;source.*;transaction.*;util.*;value.*;view.*;xmlLexer.*;xmlSink.*;xmlSource.*;cclassad.*;common.*" ClassadSrcs)
+  condor_selective_glob("attrrefs.*;classad.*;classadCache.*;collection.*;collectionBase.*;debug.*;exprList.*;exprTree.*;fnCall.*;indexfile.*;lexer.*;lexerSource.*;literals.*;matchClassad.*;operators.*;query.*;sink.*;source.*;transaction.*;util.*;value.*;view.*;xmlLexer.*;xmlSink.*;xmlSource.*;cclassad.*;common.*;compactExpr.*" ClassadSrcs)
   add_library( classads STATIC ${ClassadSrcs} )    # the one which all of condor depends upon
   set_target_properties( classads PROPERTIES OUTPUT_NAME classad )
 

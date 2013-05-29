@@ -166,6 +166,7 @@ struct ClassadAttrNameHash
 	}
 
 };
+
 extern std::string       CondorErrMsg;
 #endif
 
