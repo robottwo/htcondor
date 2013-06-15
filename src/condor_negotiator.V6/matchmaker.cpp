@@ -40,6 +40,7 @@
 #include "ConcurrencyLimitUtils.h"
 #include "MyString.h"
 #include "condor_daemon_core.h"
+#include "condor_qmgr.h"
 
 #include <vector>
 #include <string>
@@ -500,6 +501,32 @@ reinitialize ()
 		tmp = NULL;
 	} else {
 		dprintf (D_ALWAYS,"PREEMPTION_REQUIREMENTS = None\n");
+	}
+
+	// get potential preemption information
+	tmp = param("RECORD_POTENTIAL_PREEMPTION");
+	if ( tmp )
+	{
+		ExprTree *tmpTree = NULL, *tmpTree2 = NULL;
+		if( ParseClassAdRvalExpr(tmp, tmpTree) )
+		{
+			EXCEPT ("Error parsing RECORD_POTENTIAL_PREEMPTION expression: %s", tmp);
+		}
+#if !defined(WANT_OLD_CLASSADS)
+		if(tmpTree)
+		{
+			tmpTree2 = AddTargetRefs( tmpTree, TargetJobAttrs );
+			delete tmpTree;
+		}
+		PotentialPreemption.reset(tmpTree2);
+#endif
+		dprintf (D_ALWAYS,"RECORD_POTENTIAL_PREEMPTION = %s\n", tmp);
+		free( tmp );
+		tmp = NULL;
+	}
+	else
+	{
+		dprintf (D_ALWAYS,"RECORD_POTENTIAL_PREEMPTION = None\n");
 	}
 
 	NegotiatorMatchExprNames.clearAll();
@@ -1659,6 +1686,10 @@ negotiationTime ()
     daemonCore->Reset_Timer(negotiation_timerID, 
                             std::max(cycle_delay,  NegotiatorInterval - negotiation_cycle_stats[0]->duration), 
                             NegotiatorInterval);
+
+    // Notify schedds of the potential preemptions of running jobs.
+    // TODO: This should be made asynchronous
+    PushPotentialPreemptions();
 }
 
 
@@ -2672,6 +2703,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
                     }
 					negotiation_cycle_stats[0]->active_submitters.insert(scheddName.Value());
 					negotiation_cycle_stats[0]->active_schedds.insert(scheddAddr.Value());
+
 					result=negotiate(groupName, scheddName.Value(), schedd, submitterPrio,
                                   submitterLimit, submitterLimitUnclaimed,
 								  startdAds, claimIds, 
@@ -4066,6 +4098,38 @@ matchmakingAlgorithm(const char *scheddName, const char *scheddAddr, ClassAd &re
 					dprintf(D_MACHINE,
 							"PREEMPTION_REQUIREMENTS prevents job %d.%d from claiming %s.\n",
 							cluster_id, proc_id, machine_name.Value());
+					if (PotentialPreemption.get() &&
+						EvalExprTree(PotentialPreemption.get(), candidate, &request, result) &&
+						result.IsBooleanValue(val) && val)
+					{
+						// Record this preemption was considered
+						std::string schedd;
+						PotentialPreemptionMaps::iterator map_it;
+						if (candidate->EvaluateAttrString(ATTR_CLIENT_SCHEDD_NAME, schedd))
+						{
+							map_it = m_preemption_maps.find(schedd);
+							if (map_it == m_preemption_maps.end())
+							{
+								map_it = m_preemption_maps.insert(std::make_pair<std::string, PotentialPreemptionMap>(schedd, PotentialPreemptionMap())).first;
+							}
+							PotentialPreemptionMap::iterator it = map_it->second.find(machine_name.Value());
+							if (it == map_it->second.end())
+							{
+								std::string user, group, jobid;
+								request.EvaluateAttrString(ATTR_USER, user);
+								request.EvaluateAttrString(ATTR_SUBMITTER_GROUP, group);
+								if (candidate->EvaluateAttrString(ATTR_JOB_ID, jobid))
+								{
+									PROC_ID id = getProcByString(jobid.c_str());
+									if (id.cluster >= 0)
+									{
+										PotentialPreemptionInfo info((group.size() ? group + "." : "") + user, id);
+										map_it->second.insert(std::make_pair<std::string, PotentialPreemptionInfo>(machine_name.Value(), info));	
+									}
+								}
+							}
+						}
+					}
 					continue;
 				}
 					// (2) we need to make sure that the machine ranks the job
@@ -5560,4 +5624,113 @@ Matchmaker::publishNegotiationCycleStats( ClassAd *ad )
 }
 
 GCC_DIAG_ON(float-equal)
+
+
+class ScheddException : public std::exception
+{
+  public:
+	ScheddException(std::string str) : m_str(str) {}
+	~ScheddException() throw () {}
+	const char* what() const throw() { return m_str.c_str(); }
+  private:
+	std::string m_str;
+};
+
+
+void
+Matchmaker::PushPotentialPreemptions()
+{
+	for (PotentialPreemptionMaps::const_iterator it=m_preemption_maps.begin(); it != m_preemption_maps.end(); it++)
+	{
+		const std::string &schedd_name = it->first;
+
+		// Locate the schedd.
+		Daemon schedd( DT_SCHEDD, schedd_name.c_str(), 0 );
+
+		if (schedd.locate() && schedd.addr())
+		{
+			std::string addr = schedd.addr();
+			std::string version = schedd.version() ? schedd.version() : "";
+
+			try {
+				PushScheddPotentialPreemptions(addr, version, it->second);
+			} catch (std::exception &e) {
+				dprintf(D_ALWAYS, "Caught exception %s when trying to report potential preemptions to schedd %s; ignoring.\n", e.what(), schedd_name.c_str());
+			}
+		}
+		else
+		{
+			dprintf (D_ALWAYS, "Not sending potential preemption list to schedd %s.\n", schedd_name.c_str());
+		}
+	}
+	m_preemption_maps.clear();
+}
+
+
+// Helper class to make sure we don't leak schedd connections
+class ConnectionSentry
+{
+  public:
+	ConnectionSentry(const std::string &schedd_addr, const std::string &schedd_version) : m_connected(false)
+	{
+		if (ConnectQ(schedd_addr.c_str(), 0, false, NULL, NULL, schedd_version.c_str()) == 0)
+		{
+			throw ScheddException("Unable to connect to schedd");
+		}
+		m_connected = true;
+	}
+
+	void disconnect()
+	{
+		if (m_connected && !DisconnectQ(NULL))
+		{
+			m_connected = false;
+			throw ScheddException("Unable to disconnect from schedd");
+		}
+		m_connected = false;
+	}
+
+	~ConnectionSentry()
+	{
+		disconnect();
+	}
+
+  private:
+	bool m_connected;
+};
+
+
+void
+Matchmaker::PushScheddPotentialPreemptions(const std::string &schedd_addr, const std::string &schedd_version, const PotentialPreemptionMap &map)
+{
+	if (!map.size()) return;
+	ConnectionSentry sentry(schedd_addr, schedd_version);
+	dprintf (D_FULLDEBUG, "Pushing %lu potential preemptions to schedd %s.\n", map.size(), schedd_addr.c_str());
+	for (PotentialPreemptionMap::const_iterator it=map.begin(); it!=map.end(); it++)
+	{
+		classad::abstime_t abstime; abstime.secs = time(NULL);
+		abstime.offset = classad::timezone_offset(abstime.secs, false);
+		classad::Value val; val.SetAbsoluteTimeValue(abstime);
+		classad::ClassAdUnParser unparser;
+		std::auto_ptr<classad::ExprTree> exprTree; exprTree.reset(classad::Literal::MakeLiteral(val));
+		std::string attr_str;
+		unparser.Unparse(attr_str, exprTree.get());
+		const PROC_ID &job = it->second.getRemoteJobID();
+		dprintf (D_FULLDEBUG, "%s = %s\n", ATTR_LAST_POTENTIAL_PREEMPTION_TIME, attr_str.c_str());
+		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTION_TIME, attr_str.c_str()))
+		{
+			throw ScheddException("Unable to edit job last potential preemption time");
+		}
+		const std::string &user = it->second.getPreemptor();
+		val.SetStringValue(user);
+		exprTree.reset(classad::Literal::MakeLiteral(val));
+		attr_str.clear();
+		unparser.Unparse(attr_str, exprTree.get());
+		dprintf (D_FULLDEBUG, "%s = %s\n", ATTR_LAST_POTENTIAL_PREEMPTING_USER, attr_str.c_str());
+		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTING_USER, attr_str.c_str()))
+		{
+			throw ScheddException("Unable to edit job last potential preemption user");
+		}
+	}
+}
 

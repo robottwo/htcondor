@@ -36,6 +36,9 @@
 /* FILESQL include */
 #include "file_sql.h"
 
+// Forward decl
+class DCSchedd;
+
 typedef struct MapEntry {
 	char *remoteHost;
 	int sequenceNum;
@@ -301,6 +304,7 @@ class Matchmaker : public Service
 		int  MaxTimePerSpin;        // How long per pie spin
 		ExprTree *PreemptionReq;	// only preempt if true
 		ExprTree *PreemptionRank; 	// rank preemption candidates
+		std::auto_ptr<ExprTree> PotentialPreemption; // Record potential preemption if true
 		bool preemption_req_unstable;
 		bool preemption_rank_unstable;
 		ExprTree *NegotiatorPreJobRank;  // rank applied before job rank
@@ -360,6 +364,32 @@ class Matchmaker : public Service
 		int rejPreemptForRank;	//   - startd RANKs new job lower?
 		int rejForSubmitterLimit;   //   - not enough group quota?
         string rejectedConcurrencyLimit; // the name of concurrency limit rejected
+
+		// PREEMPTION INFORMATION
+		// Class used to store potential preemptions.
+		class PotentialPreemptionInfo
+		{
+			public:
+				PotentialPreemptionInfo(std::string preemptor, PROC_ID remote_job_id)
+					: m_preemptor(preemptor),
+					  m_remote_job_id(remote_job_id)
+				{}
+				const std::string & getPreemptor() const {return m_preemptor;}
+				PROC_ID getRemoteJobID() const {return m_remote_job_id;}
+			private:
+				std::string m_preemptor;
+				PROC_ID m_remote_job_id;
+		};
+		// Maps a slot name to preemptor and remote job.
+		typedef classad_unordered<std::string, PotentialPreemptionInfo> PotentialPreemptionMap;
+		// Vector of (schedd name, preemption maps).
+		typedef classad_unordered<std::string, PotentialPreemptionMap> PotentialPreemptionMaps;
+
+		PotentialPreemptionMaps m_preemption_maps;
+
+		// Pushes preemption information to the schedd.
+		void PushPotentialPreemptions();
+		void PushScheddPotentialPreemptions(const std::string &addr, const std::string &vers, const PotentialPreemptionMap &map);
 
 
 		// Class used to store each individual entry in the

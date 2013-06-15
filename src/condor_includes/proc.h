@@ -26,9 +26,11 @@
 
 
 // a handy little structure used in a lot of places
-typedef struct {
+typedef struct proc_id {
 	int		cluster;
 	int		proc;
+	proc_id(int c, int p) : cluster(c), proc(p) {}
+	proc_id() : cluster(-1), proc(-1) {}
 } PROC_ID;
 
 #if defined(__cplusplus)
