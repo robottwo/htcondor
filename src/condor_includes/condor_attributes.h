@@ -975,6 +975,9 @@ extern const char ATTR_SEC_AUTHENTICATED_USER [];
 #define ATTR_JOB_MACHINE_ATTR_SLOT_WEIGHT0  "MachineAttrSlotWeight0"
 #define ATTR_CUMULATIVE_SLOT_TIME  "CumulativeSlotTime"
 #define ATTR_COMMITTED_SLOT_TIME  "CommittedSlotTime"
+#define ATTR_LAST_COMMIT "LastCommit"
+#define ATTR_EXPECTED_COMMIT "ExpectedCommit"
+#define ATTR_UNCOMMITTED_TIME "UncommittedTime"
 
 #define ATTR_HASH_NAME  "HashName"
 #define ATTR_AUTHENTICATED_IDENTITY  "AuthenticatedIdentity"

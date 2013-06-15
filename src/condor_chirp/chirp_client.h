@@ -172,6 +172,11 @@ DLLEXPORT int chirp_client_get_job_attr_volatile( struct chirp_client *c, const 
  This may differ from the value in the schedd!
 */
 
+DLLEXPORT int chirp_client_get_starter_attr( struct chirp_client *c, const char *name, char **expr );
+/* chirp_client_get_starter_attr()
+ * When running under HTCondor, obtain the value of a starter ClassAd attribute.
+ */
+
 DLLEXPORT int chirp_client_set_job_attr( struct chirp_client *c, const char *name, const char *expr );
 /*chirp_client_set_job_attr()
   When running under Condor, set the value of a job ClassAd attribute.
@@ -183,6 +188,16 @@ DLLEXPORT int chirp_client_set_job_attr_volatile( struct chirp_client *c, const 
   This variant of set_job_attr will not push the update immediately, but rather as a non-durable
   update during the next communication between starter and shadow.
 */
+
+DLLEXPORT int chirp_client_set_last_commit( struct chirp_client *c, const char *expr );
+/*chirp_client_set_last_commit()
+ * When running under HTCondor, inform the starter of when the job was last committed.
+ */
+
+DLLEXPORT int chirp_client_set_expected_commit( struct chirp_client *c, const char *expr );
+/*chirp_client_set_expected_commit()
+ * When running under HTCondor, inform the starter of when we expect to next commit the job.
+ */
 
 DLLEXPORT int chirp_client_open( struct chirp_client *c, const char *path, const char *flags, int mode );
 /*chirp_client_open()

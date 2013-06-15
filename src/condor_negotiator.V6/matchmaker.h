@@ -198,7 +198,7 @@ class Matchmaker : public Service
 									  double preemptPrio, 
                                       double limitUsed, double limitUsedUnclaimed,
                                       double submitterLimit, double submitterLimitUnclaimed, 
-                                      double pieLeft, bool only_for_startdrank);
+                                      double pieLeft, time_t beginTime, bool only_for_startdrank);
 		int matchmakingProtocol(ClassAd &request, ClassAd *offer, 
 						ClaimIdHash &claimIds, Sock *sock,
 						const char* scheddName, const char* scheddAddr);

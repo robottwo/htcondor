@@ -3613,6 +3613,7 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
                                              limitUsed, limitUsedUnclaimed, 
                                              submitterLimit, submitterLimitUnclaimed,
 											 pieLeft,
+											 beginTime,
 											 only_consider_startd_rank);
 
 			if( !offer )
@@ -3843,6 +3844,7 @@ matchmakingAlgorithm(const char *scheddName, const char *scheddAddr, ClassAd &re
 					 double limitUsed, double limitUsedUnclaimed,
                      double submitterLimit, double submitterLimitUnclaimed,
 					 double pieLeft,
+					 time_t beginTime,
 					 bool only_for_startdrank)
 {
 		// to store values pertaining to a particular candidate offer
@@ -4005,6 +4007,14 @@ matchmakingAlgorithm(const char *scheddName, const char *scheddAddr, ClassAd &re
 			dprintf(D_MACHINE,"Testing whether the job matches with the following machine ad:\n");
 			dPrintAd(D_MACHINE, *candidate);
 		}
+
+		long long lastcommit;
+		if (!candidate->EvaluateAttrInt(ATTR_LAST_COMMIT, lastcommit) && !candidate->EvaluateAttrInt(ATTR_JOB_START, lastcommit))
+		{
+			lastcommit = beginTime;
+		}
+		long long uncommitted = beginTime - lastcommit;
+		candidate->InsertAttr(ATTR_UNCOMMITTED_TIME, uncommitted < 0 ? 0 : uncommitted);
 
 			// the candidate offer and request must match
 		bool is_a_match = IsAMatch(&request, candidate);

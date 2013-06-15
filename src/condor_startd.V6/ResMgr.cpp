@@ -2300,6 +2300,16 @@ ResMgr::compute_draining_attrs( int /*how_much*/ )
 				graceful_time_remaining = retirement_remaining;
 			}
 
+				// See if the slot expects to commit earlier.
+			if (rip->r_expected_commit >= 0)
+			{
+				long long remaining = rip->r_expected_commit - time(NULL);
+				if ((graceful_time_remaining > remaining) && (remaining >= 0))
+				{
+					graceful_time_remaining = remaining;
+				}
+			}
+
 			ll_expected_graceful_draining_badput += cpus*graceful_time_remaining;
 			if( graceful_time_remaining > ll_expected_graceful_draining_completion ) {
 				ll_expected_graceful_draining_completion = graceful_time_remaining;

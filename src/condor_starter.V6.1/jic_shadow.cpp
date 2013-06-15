@@ -743,7 +743,7 @@ JICShadow::notifyJobExit( int exit_status, int reason, UserProc*
 	}
 
 	dprintf( D_FULLDEBUG, "Notifying exit status=%d reason=%d\n",exit_status,reason );
-	updateStartd(&ad, true);
+	updateStartd(&ad, 1);
 
 	if( !had_hold ) {
 		if( REMOTE_CONDOR_job_exit(exit_status, reason, &ad) < 0) {
@@ -779,8 +779,14 @@ JICShadow::notifyJobTermination( UserProc *user_proc )
 	return rval;
 }
 
+/*
+ * update_type - 
+ * - 0: Normal job update
+ * - 1: Final job update
+ * - 2: Starter ad update
+ */
 void
-JICShadow::updateStartd( ClassAd *ad, bool final_update )
+JICShadow::updateStartd( ClassAd *ad, int update_type )
 {
 	ASSERT( ad );
 
@@ -790,7 +796,7 @@ JICShadow::updateStartd( ClassAd *ad, bool final_update )
 	}
 
 	m_job_startd_update_sock->encode();
-	if( !m_job_startd_update_sock->put((int)final_update) ||
+	if( !m_job_startd_update_sock->put((int)update_type) ||
 		!putClassAd(m_job_startd_update_sock, *ad) ||
 		!m_job_startd_update_sock->end_of_message() )
 	{
@@ -803,7 +809,7 @@ JICShadow::updateStartd( ClassAd *ad, bool final_update )
 		dPrintAd(D_JOB, *ad);
 	}
 
-	if( final_update ) {
+	if( 1==update_type ) {
 		delete m_job_startd_update_sock;
 		m_job_startd_update_sock = NULL;
 	}
@@ -1850,6 +1856,65 @@ JICShadow::recordVolatileUpdate( const std::string &name, const classad::ExprTre
 }
 
 
+bool
+JICShadow::recordExpectedCommit( const classad::ExprTree &expr )
+{
+	ClassAd ad;
+	classad::ExprTree *expr_copy = expr.Copy();
+	ad.Insert(ATTR_EXPECTED_COMMIT, expr_copy);
+	updateStartd(&ad, 2);
+	return true;
+}
+
+
+bool
+JICShadow::recordLastCommit( const classad::ExprTree &expr )
+{
+	ClassAd ad;
+	classad::ExprTree *expr_copy = expr.Copy();
+	ad.Insert(ATTR_LAST_COMMIT, expr_copy);
+	updateStartd(&ad, 2);
+	return true;
+}
+
+
+std::auto_ptr<classad::ExprTree>
+JICShadow::getStarterAttribute( const std::string &attr_name )
+{
+	dprintf(D_FULLDEBUG, "Looking up starter attribute named %s.\n", attr_name.c_str());
+
+	std::auto_ptr<classad::ExprTree> expr;
+	if (!mach_ad) return expr;
+
+	std::string addr, name;
+	if (!mach_ad->EvaluateAttrString(ATTR_MY_ADDRESS, addr)) return expr;
+	if (!mach_ad->EvaluateAttrString(ATTR_NAME, name)) return expr;
+
+	DCStartd startd(addr.c_str());
+
+	ClassAdList ad_list;
+	if (!startd.getAds(ad_list)) return expr;
+
+	ad_list.Rewind();
+	classad::ClassAd *ad;
+	while ((ad = ad_list.Next()))
+	{
+		std::string ad_name;
+		if (!ad->EvaluateAttrString(ATTR_NAME, ad_name) || (ad_name != name))
+		{
+			continue;
+		}
+		classad::ExprTree *borrowed_expr = NULL;
+		if (!(borrowed_expr = ad->Lookup(attr_name)))
+		{
+			return expr;
+		}
+		expr.reset(borrowed_expr->Copy());
+		return expr;
+	}
+	return expr;
+}
+
 
 std::auto_ptr<classad::ExprTree>
 JICShadow::getVolatileUpdate( const std::string &name )
@@ -2017,7 +2082,7 @@ JICShadow::updateShadow( ClassAd* update_ad, bool insure_update )
 		rval = shadow->updateJobInfo(ad, insure_update);
 	}
 
-	updateStartd(ad, false);
+	updateStartd(ad, 0);
 
 	first_time = false;
 	if (rval) {
