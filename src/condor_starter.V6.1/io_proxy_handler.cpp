@@ -366,6 +366,45 @@ void IOProxyHandler::handle_standard_request( ReliSock *r, char *line )
 		}	
 		free( recv_expr );
 
+	} else if(sscanf_chirp(line,"get_starter_attr %s",name)==1) {
+
+		std::auto_ptr<classad::ExprTree> expr = m_shadow->getStarterAttribute(name);
+		if (expr.get()) {
+			unparser.Unparse(value, expr.get());
+			sprintf(line,"%u",(unsigned int)value.size());
+			r->put_line_raw(line);
+			r->put_bytes_raw(value.c_str(),value.size());
+		} else {
+			sprintf(line,"%d",convert(-1,ENOENT));
+			r->put_line_raw(line);
+		}
+
+	} else if(sscanf_chirp(line,"set_expected_commit %s",expr) == 1) {
+
+		classad::ClassAdParser parser;
+		classad::ExprTree *expr_tree;
+		result = parser.ParseExpression(expr, expr_tree);
+		if (result)
+		{
+			result = !m_shadow->recordExpectedCommit(name, *expr_tree);
+		}
+		delete expr_tree;
+		sprintf(line,"%d",convert(result,errno));
+		r->put_line_raw(line);
+
+	} else if(sscanf_chirp(line,"set_last_commit %s",expr) == 1) {
+
+		classad::ClassAdParser parser;
+                classad::ExprTree *expr_tree;
+                result = parser.ParseExpression(expr, expr_tree);
+                if (result)
+                {
+                        result = !m_shadow->recordLastCommit(name, *expr_tree);
+                }
+                delete expr_tree;
+                sprintf(line,"%d",convert(result,errno));
+                r->put_line_raw(line);
+
 	} else if(sscanf_chirp(line,"constrain %s",expr)==1) {
 
 		result = REMOTE_CONDOR_constrain(expr);
