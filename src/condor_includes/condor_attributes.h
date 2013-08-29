@@ -495,6 +495,7 @@
 #define ATTR_SUB_PROC_ID  "SubProcId"
 #define ATTR_PRIVATE_NETWORK_NAME  "PrivateNetworkName"
 #define ATTR_Q_DATE  "QDate"
+#define ATTR_QUEUE_AGE "QueueAge"
 #define ATTR_RANK  "Rank"
 #define ATTR_REAL_UID  "RealUid"
 #define ATTR_RELEASE_CLAIM  "ReleaseClaim"

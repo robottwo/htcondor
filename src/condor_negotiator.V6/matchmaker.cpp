@@ -438,7 +438,6 @@ reinitialize ()
 {
 	char *tmp;
 	static bool first_time = true;
-	ExprTree *tmp_expr = 0;
 
     // (re)build the HGQ group tree from configuration
     // need to do this prior to initializing the accountant
@@ -4066,6 +4065,12 @@ matchmakingAlgorithm(const char *scheddName, const char *scheddAddr, ClassAd &re
 		}
 		long long uncommitted = beginTime - lastcommit;
 		candidate->InsertAttr(ATTR_UNCOMMITTED_TIME, uncommitted < 0 ? 0 : uncommitted);
+
+		long long qdate;
+		if (candidate->EvaluateAttrInt(ATTR_Q_DATE, qdate))
+		{
+			candidate->InsertAttr(ATTR_QUEUE_AGE, beginTime - qdate);
+		}
 
 			// the candidate offer and request must match
 		bool is_a_match = IsAMatch(&request, candidate);
