@@ -31,13 +31,13 @@
 
 static int sscanf_chirp( char const *input,char const *fmt,... );
 
-IOProxyHandler::IOProxyHandler(JICShadow *shadow, bool enable_file, bool enable_updates, bool enable_volatile)
+IOProxyHandler::IOProxyHandler(JICShadow *shadow, bool enable_file, bool enable_updates, bool enable_delayed)
 	: m_shadow(shadow),
 	  cookie(NULL),
 	  got_cookie(false),
 	  m_enable_files(enable_file),
 	  m_enable_updates(enable_updates),
-	  m_enable_volatile(enable_volatile)
+	  m_enable_delayed(enable_delayed)
 {
 }
 
@@ -233,12 +233,28 @@ void IOProxyHandler::handle_standard_request( ReliSock *r, char *line )
 		if(result==0) {
 			dprintf(D_SYSCALLS,"Directed to use url %s\n",url);
 			ASSERT( strlen(url) < CHIRP_LINE_MAX );
+			if(!strncmp(url,"remote:",7)) {
+				strncpy(path,url+7,CHIRP_LINE_MAX);
+			} else if(!strncmp(url,"buffer:remote:",14)) {
+				strncpy(path,url+14,CHIRP_LINE_MAX);
+			} else {
+				// Condor 7.9.6 dropped the remote: and buffer:remote prefix for the vanilla shadow
+				// so it's not longer correct to assert then these prefixes are missing.
+				// TJ: for some reason get_peer_version() is not set here, so I have to assume that the other side
+				// *might* be 7.9.6 and tolerate the missing url prefix.
+				const CondorVersionInfo *vi = r->get_peer_version();
+				dprintf(D_SYSCALLS | D_VERBOSE,"File %s maps to url %s, peer version is %d.%d.%d\n", path, url, 
+					    vi ? vi->getMajorVer() : 0, vi ? vi->getMinorVer() : 0, vi ? vi->getSubMinorVer() : 0);
+				if (vi && ! vi->built_since_version(7,9,6)) {
+					EXCEPT("File %s maps to url %s, which I don't know how to open.\n",path,url);
+				}
+				strncpy(path,url,CHIRP_LINE_MAX);
+			}
 		} else {
 			EXCEPT("Unable to map file %s to a url: %s\n",path,strerror(errno));
 		}
 
 		dprintf(D_SYSCALLS,"Which simplifies to file %s\n",path);
-
 
 		flags = 0;
 
@@ -352,14 +368,27 @@ void IOProxyHandler::handle_standard_request( ReliSock *r, char *line )
 
 		free( url );
 		url = NULL;
-	} else if(m_enable_volatile && sscanf_chirp(line,"set_job_attr_volatile %s %s",name,expr)==2) {
+	} else if(m_enable_delayed && sscanf_chirp(line,"set_job_attr_delayed %s %s",name,expr)==2) {
 
 		classad::ClassAdParser parser;
 		classad::ExprTree *expr_tree;
-		result = parser.ParseExpression(expr, expr_tree);
-		if (result)
+		if (strlen(expr) > 993)
 		{
-			result = !m_shadow->recordVolatileUpdate(name, *expr_tree);
+			dprintf(D_FULLDEBUG, "Chirp update too long! (%lu)\n", strlen(expr));
+			result = -1;
+			errno = ENAMETOOLONG;
+		}
+		else
+		{
+			result = parser.ParseExpression(expr, expr_tree);
+			if (result)
+			{
+				result = !m_shadow->recordDelayedUpdate(name, *expr_tree);
+			}
+			else
+			{
+				dprintf(D_ALWAYS, "Failed to parse line to a ClassAd expression: %s\n", expr);
+			}
 		}
 		sprintf(line,"%d",convert(result,errno));
 		r->put_line_raw(line);
@@ -397,11 +426,10 @@ void IOProxyHandler::handle_standard_request( ReliSock *r, char *line )
 			r->put_line_raw(line);
 		}
 
-	} else if(m_enable_volatile && sscanf_chirp(line,"get_job_attr_volatile %s",name)==1) {
-
+	} else if(m_enable_delayed && sscanf_chirp(line,"get_job_attr_delayed %s",name)==1) {
 		std::string value;
 		classad::ClassAdUnParser unparser;
-		std::auto_ptr<classad::ExprTree> expr = m_shadow->getVolatileUpdate(name);
+		std::auto_ptr<classad::ExprTree> expr = m_shadow->getDelayedUpdate(name);
 		if (expr.get()) {
 			unparser.Unparse(value, expr.get());
 			sprintf(line,"%u",(unsigned int)value.size());

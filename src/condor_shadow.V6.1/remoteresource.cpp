@@ -58,7 +58,7 @@ static const char *Resource_State_String [] = {
 
 RemoteResource::RemoteResource( BaseShadow *shad ) 
 	: m_want_remote_updates(false),
-	  m_want_volatile(true)
+	  m_want_delayed(true)
 {
 	shadow = shad;
 	dc_startd = NULL;
@@ -98,7 +98,9 @@ RemoteResource::RemoteResource( BaseShadow *shad )
 	m_upload_xfer_status = XFER_STATUS_UNKNOWN;
 	m_download_xfer_status = XFER_STATUS_UNKNOWN;
 
-	param(m_remote_update_prefix, "REMOTE_UPDATE_PREFIX", "CHIRP");
+	std::string prefix;
+	param(prefix, "CHIRP_DELAYED_UPDATE_PREFIX", "CHIRP*");
+	m_delayed_update_prefix.initializeFromString(prefix.c_str());
 }
 
 
@@ -958,14 +960,14 @@ RemoteResource::setJobAd( ClassAd *jA )
 
 	int int_value;
 	int64_t int64_value;
-	float float_value;
+	double real_value;
 
-	if( jA->LookupFloat(ATTR_JOB_REMOTE_SYS_CPU, float_value) ) {
-		remote_rusage.ru_stime.tv_sec = (int) float_value; 
+	if( jA->LookupFloat(ATTR_JOB_REMOTE_SYS_CPU, real_value) ) {
+		remote_rusage.ru_stime.tv_sec = (time_t) real_value;
 	}
 			
-	if( jA->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, float_value) ) {
-		remote_rusage.ru_utime.tv_sec = (int) float_value; 
+	if( jA->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, real_value) ) {
+		remote_rusage.ru_utime.tv_sec = (time_t) real_value;
 	}
 
 	if( jA->LookupInteger(ATTR_IMAGE_SIZE, int64_value) ) {
@@ -995,7 +997,7 @@ RemoteResource::setJobAd( ClassAd *jA )
 
 	jA->LookupBool( ATTR_WANT_IO_PROXY, m_want_chirp );
 	jA->LookupBool( ATTR_WANT_REMOTE_UPDATES, m_want_remote_updates );
-	jA->LookupBool( ATTR_WANT_VOLATILE_UPDATES, m_want_volatile );
+	jA->LookupBool( ATTR_WANT_DELAYED_UPDATES, m_want_delayed );
 
 	bool stream_input=false, stream_output=false, stream_error=false;
 	jA->LookupBool(ATTR_STREAM_INPUT,stream_input);
@@ -1023,7 +1025,6 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 {
 	int int_value;
 	int64_t int64_value;
-	float float_value;
 	MyString string_value;
 
 	dprintf( D_FULLDEBUG, "Inside RemoteResource::updateFromStarter()\n" );
@@ -1035,14 +1036,15 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 		dprintf( D_MACHINE, "--- End of ClassAd ---\n" );
 	}
 
-	if( update_ad->LookupFloat(ATTR_JOB_REMOTE_SYS_CPU, float_value) ) {
-		remote_rusage.ru_stime.tv_sec = (int) float_value; 
-		jobAd->Assign(ATTR_JOB_REMOTE_SYS_CPU, float_value);
+	double real_value;
+	if( update_ad->LookupFloat(ATTR_JOB_REMOTE_SYS_CPU, real_value) ) {
+		remote_rusage.ru_stime.tv_sec = (time_t) real_value;
+		jobAd->Assign(ATTR_JOB_REMOTE_SYS_CPU, real_value);
 	}
 			
-	if( update_ad->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, float_value) ) {
-		remote_rusage.ru_utime.tv_sec = (int) float_value; 
-		jobAd->Assign(ATTR_JOB_REMOTE_USER_CPU, float_value);
+	if( update_ad->LookupFloat(ATTR_JOB_REMOTE_USER_CPU, real_value) ) {
+		remote_rusage.ru_utime.tv_sec = (time_t) real_value;
+		jobAd->Assign(ATTR_JOB_REMOTE_USER_CPU, real_value);
 	}
 
 	if( update_ad->LookupInteger(ATTR_IMAGE_SIZE, int64_value) ) {
@@ -1058,8 +1060,8 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 		jobAd->Insert(ATTR_MEMORY_USAGE, tree, false);
 	}
 
-	if( update_ad->LookupFloat(ATTR_JOB_VM_CPU_UTILIZATION, float_value) ) { 
-		  jobAd->Assign(ATTR_JOB_VM_CPU_UTILIZATION, float_value);
+	if( update_ad->LookupFloat(ATTR_JOB_VM_CPU_UTILIZATION, real_value) ) {
+		  jobAd->Assign(ATTR_JOB_VM_CPU_UTILIZATION, real_value);
 	}
 	
 	if( update_ad->LookupInteger(ATTR_RESIDENT_SET_SIZE, int_value) ) {
@@ -1140,7 +1142,7 @@ RemoteResource::updateFromStarter( ClassAd* update_ad )
 		jobAd->AssignExpr(ATTR_SPOOLED_OUTPUT_FILES,"UNDEFINED");
 	}
 
-		// Process all chrip-based updates from the starter.
+		// Process all chirp-based updates from the starter.
 	for (classad::ClassAd::const_iterator it = update_ad->begin(); it != update_ad->end(); it++) {
 		if (allowRemoteWriteAttributeAccess(it->first))
 		{
@@ -2321,11 +2323,13 @@ bool
 RemoteResource::allowRemoteWriteAttributeAccess( const std::string &name )
 {
 	bool response = m_want_chirp || m_want_remote_updates;
-	if (!response && m_want_volatile)
+	if (!response && m_want_delayed)
 	{
-                response = strcasecmp(name.substr(0, m_remote_update_prefix.length()).c_str(), m_remote_update_prefix.c_str()) == 0;
+		response = m_delayed_update_prefix.contains_anycase_withwildcard(name.c_str());
 	}
-	logRemoteAccessCheck(response,"write access to attribute",name.c_str());
+	// Do NOT log failures -- unfortunately, this routine doesn't know about the other
+	// whitelisted attributes (for example, ExitCode)
+	if (response) logRemoteAccessCheck(response,"write access to attribute",name.c_str());
 	return response;
 }
 
