@@ -491,10 +491,10 @@ reinitialize ()
 		}
 #if defined(ADD_TARGET_SCOPING)
 		if(PreemptionReq){
-			tmp_expr = AddTargetRefs( PreemptionReq, TargetJobAttrs );
+			ExprTree *tmp_expr = AddTargetRefs( PreemptionReq, TargetJobAttrs );
 			delete PreemptionReq;
+			PreemptionReq = tmp_expr;
 		}
-		PreemptionReq = tmp_expr;
 #endif
 		dprintf (D_ALWAYS,"PREEMPTION_REQUIREMENTS = %s\n", tmp);
 		free( tmp );
