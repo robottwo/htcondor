@@ -1,58 +1,201 @@
 #!/bin/bash
 set -e
-if [ "X$VERBOSE" != "X" ]; then
+if [[ $VERBOSE ]]; then
   set -x
 fi
 
-# makesrpm.sh - generates a .src.rpm from the currently checked out HEAD,
-# along with condor.spec and the sources in this directory
+# makesrpm.sh - generates source and binary rpms with a source tarball
+# from git, along with condor.spec and the source files in this directory
 
 usage () {
-  echo "usage: $(basename "$0")"
-  echo "Sorry, no options yet..."
-  exit
+  echo "usage: [VERBOSE=1] $(basename "$0") [options] [--] [rpmbuild-options]"
+  echo "Options:"
+  echo "  -ba          Build binary and source packages"
+  echo "  -bs          Build source package only (default)"
+  echo
+  echo "  -o DESTDIR   Output rpms to DESTDIR (default=\$PWD)"
+  echo
+  echo "  --bundle-std-univ-externals  Include std univ externals in src.rpm"
+  echo "  --bundle-uw-externals        Include other UW externals in src.rpm"
+  echo "  --bundle-all-externals       Include all externals in src.rpm"
+  echo "  --externals-location {PATH|URL}  Use external sources from location"
+  echo "                       (default=$externals_download)"
+  echo
+  echo "  --git-revision COMMIT   Use condor source from git tag or hash" \
+                                                         "(default=HEAD)"
+  echo "  --condor-release X.Y.Z  Use condor release tarball for version X.Y.Z"
+  echo "  --rpm-base-release REL  Define base release for use in spec"
+  echo "                          Eg, 0.1 for git builds, 1 for condor-release"
+  echo
+  echo "Environment:"
+  echo "  VERBOSE=1                         Show all commands run by script"
+  echo "  BUNDLE_EXTERNALS_FROM={PATH|URL}  Provide default externals location"
+  echo
+  exit $1
 }
 
+fail () { echo "$@" >&2; exit 1; }
+
+# defaults
+buildmethod=-bs
+externals_download=http://parrot.cs.wisc.edu/externals
+externals_location=${BUNDLE_EXTERNALS_FROM:-$externals_download}
+checkout_commit=HEAD
+
+while [[ $1 = -* ]]; do
 case $1 in
+  -ba | -bs ) buildmethod=$1;              shift ;;
+         -o ) dest_dir=$(cd "$2" && pwd);  shift 2 ;;
+
+  --bundle-uw-externals       ) uw_externals=1;                       shift ;;
+  --bundle-std-univ-externals ) std_univ_externals=1;                 shift ;;
+  --bundle-all-externals      ) uw_externals=1 std_univ_externals=1;  shift ;;
+
+  --externals-location ) externals_location=$2;  shift 2 ;;
+  --git-revision       ) checkout_commit=$2;     shift 2 ;;
+  --condor-release     ) condor_release=$2;      shift 2 ;;
+  --rpm-base-release   ) rpm_base_release=$2;    shift 2 ;;
+
+  --*=*  ) set -- "${1%%=*}" "${1#*=}" "${@:2}" ;;  # parse --option=value
+
   --help ) usage ;;
+  -- ) shift; break ;;
+# *  ) break ;;               # assume remaining args are rpmbuild-options
+  *  ) usage 1 ;;             # assume remaining args are usage errors
 esac
+done
 
-# Do everything in a temp dir that will go away on errors or end of script
-tmpd=$(mktemp -d -p $PWD .tmpXXXXXX)
-trap 'rm -rf "$tmpd"' EXIT
+[[ $dest_dir ]] || dest_dir=$PWD
 
-pushd "$(dirname "$0")"   >/dev/null  # go to srpm dir
-if [ "$#" -eq 1 ]; then
-  pushd $1                >/dev/null
-else
-  pushd ../../..          >/dev/null  # go to root of git tree
+check_version_string () {
+  [[ ${!1} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Bad ${1//_/ }: '${!1}'"
+}
+
+if [[ $condor_release ]]; then
+  if [[ $checkout_commit != HEAD ]]; then
+    fail "Options --git-revision and --condor-release are mutually exclusive."
+  fi
+  check_version_string  condor_release
+  checkout_commit=V${condor_release//./_}
 fi
 
-# why is it so hard to do a "git cat" ?
-condor_version=$( git archive HEAD CMakeLists.txt | tar xO \
-                  | awk -F\" '/^set\(VERSION / {print $2}' )
+download_external () { wget -nv -O "$1" "$externals_location/$1"; }
+copy_external     () { cp -p "$externals_location/$1" .;          }
 
-git archive HEAD | gzip > "$tmpd/condor.tar.gz"
+if [[ $uw_externals || $std_univ_externals ]]; then
+  case $externals_location in
+    http://* | https://* | \
+     ftp://* ) get_external=download_external ;;
+       *://* ) fail "Unrecognized URL: '$externals_location'" ;;
+          /* ) get_external=copy_external ;;
+           * ) externals_location=$PWD/$externals_location
+               get_external=copy_external ;;
+  esac
 
-git_rev=$(git log -1 --pretty=format:%h)
+  if [[ $externals_location = /* && ! -d $externals_location ]]; then
+    fail "Path to externals location does not exist: '$externals_location'"
+  fi
+fi
 
-popd >/dev/null # back to srpm dir or initial dir.
+# Do everything in a temp dir that will go away on errors or end of script
+tmpd=$(mktemp -d "$PWD/.tmpXXXXXX")
+trap 'rm -rf "$tmpd"' EXIT
 
-# should verify this: [[ $condor_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+cd "$(dirname "$0")"                   # go to srpm source dir
+srpm_dir=$PWD
+cd "$(git rev-parse --show-toplevel)"  # go to root of git tree
 
-sed -i "
-  s/^%define git_rev .*/%define git_rev $git_rev/
-  s/^%define tarball_version .*/%define tarball_version $condor_version/
-" condor.spec
+git_rev=$(git rev-parse --short "$checkout_commit") \
+|| fail "Couldn't find git rev for '$checkout_commit'"
 
-mkdir "$tmpd/SOURCES"
-cp -p -- * "$tmpd/SOURCES/"
-mv "$tmpd/condor.tar.gz" "$tmpd/SOURCES/"
+condor_version=$(
+  git show "$checkout_commit":CMakeLists.txt \
+  | awk -F\" '/^set\(VERSION / {print $2}'
+)
 
-srpm=$(rpmbuild -bs -D"_topdir $tmpd" condor.spec)
-srpm=${srpm#Wrote: }
+[[ $condor_version ]] || fail "Condor version string not found"
+check_version_string  condor_version
 
-popd >/dev/null # back to original working dir
-mv "$srpm" .
-#echo "Wrote: ${srpm##*/}"
+if [[ $condor_release && $condor_version != $condor_release ]]; then
+  fail "git release tag does not match version in CMakeLists.txt:" \
+       "'$condor_release' vs '$condor_version'"
+fi
+
+if [[ $condor_release ]]; then
+  condor_tarball_name=condor-$condor_release
+  archive_prefix=--prefix=$condor_tarball_name/
+else
+  condor_tarball_name=condor
+fi
+git archive "$checkout_commit" $archive_prefix \
+| gzip > "$tmpd/$condor_tarball_name.tar.gz"
+
+cd "$tmpd"
+mkdir SOURCES
+cp -p "$srpm_dir"/* SOURCES
+mv $condor_tarball_name.tar.gz SOURCES
+
+update_spec_define () {
+  sed -i "s|^ *%define * $1 .*|%define $1 $2|" SOURCES/condor.spec
+}
+
+update_spec_define git_rev         "$git_rev"
+update_spec_define tarball_version "$condor_version"
+if [[ $condor_release ]]; then
+  update_spec_define git_build 0
+else
+  update_spec_define git_build 1
+fi
+if [[ $rpm_base_release ]]; then
+  if [[ $condor_release ]]; then
+    update_spec_define condor_base_release "$rpm_base_release"
+  else
+    update_spec_define condor_git_base_release "$rpm_base_release"
+  fi
+fi
+
+get_sources_from_file () {
+  cd SOURCES
+  for file in $(< "$srpm_dir/$1"); do
+    $get_external "$file"
+  done
+  cd ..
+}
+
+if [[ $uw_externals ]]; then
+  get_sources_from_file external-uw-sources
+  update_spec_define    bundle_uw_externals 1
+fi
+
+if [[ $std_univ_externals ]]; then
+  get_sources_from_file external-std-univ-sources
+  update_spec_define    bundle_std_univ_externals 1
+fi
+
+if [[ $(rpm -E %rhel) = 5 ]]; then
+  # the following cruft is all necessary on el5, where -D"_topdir $tmpd"
+  # doesn't take priority over what's in the rpmmacros files, nor does
+  # the --macros option seem to be honored...
+
+  rcfiles=
+  for rc in /usr/lib/rpm/rpmrc \
+            /usr/lib/rpm/redhat/rpmrc \
+            /etc/rpmrc \
+            ~/.rpmrc; do
+    [[ -e $rc ]] && rcfiles+=$rc:
+  done
+  rcfiles+=rpmrc
+  rpmbuild --showrc | grep '^macrofiles *:' | sed "s|$|:rpmmacros|" > rpmrc
+  echo "%_topdir $tmpd" > rpmmacros
+
+  if [[ $buildmethod = -bs ]]; then
+    buildmethod+=" --nodeps"
+  fi
+  mkdir BUILD BUILDROOT RPMS SPECS SRPMS
+  rpmbuild $buildmethod --rcfile="$rcfiles" "$@" SOURCES/condor.spec
+else
+  rpmbuild $buildmethod "$@" -D"_topdir $tmpd" SOURCES/condor.spec
+fi
+
+mv *RPMS/*.rpm "$dest_dir"
 

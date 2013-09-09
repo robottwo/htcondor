@@ -34,7 +34,7 @@
 %endif
 
 # default to uw_build if neither fedora nor osg is enabled
-%if 0%{!?uw_build:1}
+%if %undefined uw_build
 %if 0%{?fedora} || 0%{?osg}
 %define uw_build 0
 %else
@@ -43,7 +43,7 @@
 %endif
 
 # enable std universe by default 
-%if 0%{!?std_univ:1}
+%if %undefined std_univ
 %define std_univ 1
 %endif
 
@@ -60,6 +60,10 @@
 %define gsoap 0
 %else
 %endif
+
+# define these to 1 if you want to include externals in source rpm
+%define bundle_uw_externals 0
+%define bundle_std_univ_externals 0
 
 # Things not turned on, or don't have Fedora packages yet
 %define qmf 0
@@ -89,7 +93,7 @@
 %define git_build 1
 # If building with git tarball, Fedora requests us to record the rev.  Use:
 # git log -1 --pretty=format:'%h'
-%define git_rev d65ec71
+%define git_rev f9e8f64
 
 %if ! (0%{?fedora} > 12 || 0%{?rhel} > 5)
 %{!?python_sitelib: %global python_sitelib %(%{__python} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
@@ -102,14 +106,14 @@ Version: %{tarball_version}
 %global version_ %(tr . _ <<< %{version})
 
 # Only edit the %condor_base_release to bump the rev number
-%define condor_base_release 0.unif.1
+%define condor_git_base_release 0.1.unif
+%define condor_base_release 1.unif
 %if %git_build
-        %define condor_release %condor_base_release.%{git_rev}.git
+        %define condor_release %condor_git_base_release.%{git_rev}.git
 %else
         %define condor_release %condor_base_release
 %endif
 Release: %condor_release%{?dist}
-# Release: 0.unif.1.pre20130821.d65ec71%{?dist}
 
 License: ASL 2.0
 Group: Applications/System
@@ -160,22 +164,46 @@ Source4: condor.osg-sysconfig
 # % endif
 Source5: condor_config.local.dedicated.resource
 
-# Patch0: condor_config.generic.patch
-# Patch1: condor_peaceful_off.patch
-# Patch2: condor_ulimit.patch
-# Patch3: chkconfig_off.patch
+%if %bundle_uw_externals
+Source101: blahp-1.16.5.1.tar.gz
+Source102: boost_1_49_0.tar.gz
+Source103: c-ares-1.3.0.tar.gz
+Source104: coredumper-2011.05.24-r31.tar.gz
+Source105: drmaa-1.6.tar.gz
+Source106: globus-5.2.1.tar.gz
+Source107: gridsite-1.6.0.src.tar.gz
+Source108: gsoap-2.7.10.tar.gz
+Source109: gsoap_2.7.6b.tar.gz
+Source110: libcgroup-0.37.tar.bz2
+Source111: libdeltacloud-0.9.tar.gz
+Source112: log4cpp-1.0-3.tar.gz
+Source113: org.glite.ce.cream-client-api-c-1.12.1-14.tar.gz
+Source114: org.glite.ce.wsdl-1.12.1-14.tar.gz
+Source115: org.glite.security.gsoap-plugin-2.0.1-3.tar.gz
+Source116: org.glite.security.gss-2.0.1-1.tar.gz
+Source117: unicoregahp-1.2.0.tar.gz
+Source118: voms-2.0.6.tar.gz
+%endif
+
+%if %bundle_std_univ_externals
+Source120: glibc-2.12-2-x86_64.tar.gz
+Source121: glibc-2.5-20061008T1257-p0.tar.gz
+Source122: glibc-2.5-20061008T1257-x86_64-p0.tar.gz
+Source123: zlib-1.2.3.tar.gz
+%endif
+
+
 #% if 0%osg
 Patch8: osg_sysconfig_in_init_script.patch
 #% endif
-# Patch9: proper_cream_v3.diff
 %if %blahp
 Patch10: config_batch_gahp_path.patch
 %endif
-%if %std_univ
-# Patch11: cmake-glibc.patch
-# Patch12: std_local_ref-stub_gen-dep.patch
-# Patch13: std-proper.patch
-%endif
+
+# HCC patches
+# See gt3158
+Patch14: 0001-Apply-the-user-s-condor_config-last-rather-than-firs.patch
+Patch15: wso2-axis2.patch
 
 # HCC patches
 # See gt3158
@@ -619,25 +647,15 @@ exit 0
 %setup -q -n %{name}-%{tarball_version}
 %endif
 
-# merged into master-unified_rpm-branch
-# % patch0 -p1
-# % patch1 -p1
-# % patch2 -p1
-# % patch3 -p1
 %patch8 -p1
-
-%if %cream
-# % patch9 -p1
-%endif
 
 %if %blahp && ! %uw_build
 %patch10 -p1 -b .config_batch_gahp_path
 %endif
 
-%if %std_univ
-# % patch11 -p1
-# % patch12 -p1
-# % patch13 -p1
+%if 0%{?hcc}
+%patch14 -p1
+%patch15 -p0
 %endif
 
 %if 0%{?hcc}
@@ -666,6 +684,9 @@ export CMAKE_PREFIX_PATH=/usr
 %if ! %std_univ
        -DCLIPPED:BOOL=TRUE \
 %endif
+%if %bundle_uw_externals || %bundle_std_univ_externals
+       -DEXTERNALS_SOURCE_URL:STRING="$RPM_SOURCE_DIR" \
+%endif
        -D_DEBUG:BOOL=TRUE \
        -D_VERBOSE:BOOL=TRUE \
        -DBUILD_TESTING:BOOL=FALSE \
@@ -680,6 +701,9 @@ export CMAKE_PREFIX_PATH=/usr
        -DBUILD_TESTING:BOOL=FALSE \
 %if %std_univ
        -DCLIPPED:BOOL=FALSE \
+%endif
+%if %bundle_uw_externals || %bundle_std_univ_externals
+       -DEXTERNALS_SOURCE_URL:STRING="$RPM_SOURCE_DIR" \
 %endif
 %if 0%{?fedora}
        -DBUILDID:STRING=RH-%{version}-%{release} \
@@ -1689,6 +1713,15 @@ fi
 %endif
 
 %changelog
+* Sun Sep 08 2013  <edquist@cs.wisc.edu> - 8.1.2-0.1.unif
+- Packaging fixes to work with latest 8.1.2 source from master
+- Move condor.spec into git master-unified_rpm-branch
+- Apply patches to upstream branch and remove from rpm / spec
+- Always build man pages / remove references to include_man
+- Always include systemd sources for passthrough rebuilds of source rpms
+- Add macros to bundle external source tarballs with the source rpm to support
+  offline builds with externals
+
 * Tue Aug 20 2013 Carl Edquist <edquist@cs.wisc.edu> - 7.9.6-8.unif.8
 - Remove externals dependency from std-universe subpackage
 
