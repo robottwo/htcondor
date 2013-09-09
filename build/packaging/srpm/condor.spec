@@ -205,11 +205,6 @@ Patch10: config_batch_gahp_path.patch
 Patch14: 0001-Apply-the-user-s-condor_config-last-rather-than-firs.patch
 Patch15: wso2-axis2.patch
 
-# HCC patches
-# See gt3158
-Patch14: 0001-Apply-the-user-s-condor_config-last-rather-than-firs.patch
-Patch15: wso2-axis2.patch
-
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 BuildRequires: cmake
@@ -656,11 +651,6 @@ exit 0
 %if 0%{?hcc}
 %patch14 -p1
 %patch15 -p0
-%endif
-
-%if 0%{?hcc}
-%patch14 -p1
-%patch15 -p1
 %endif
 
 # fix errant execute permissions
