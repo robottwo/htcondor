@@ -1,6 +1,6 @@
 
 if ( RPM_SYSTEM_NAME )
-	SET(SRPM_FILES condor_config.local.dedicated.resource condor.osg-sysconfig condor.service  condor.spec  condor-tmpfiles.conf config_batch_gahp_path.patch  generate-tarball.sh  NOTICE.txt osg_sysconfig_in_init_script.patch makesrpm.sh )
+	SET(SRPM_FILES condor_config.local.dedicated.resource condor.osg-sysconfig condor.service  condor.spec  condor-tmpfiles.conf config_batch_gahp_path.patch  generate-tarball.sh  NOTICE.txt osg_sysconfig_in_init_script.patch makesrpm.sh 0001-Apply-the-user-s-condor_config-last-rather-than-firs.patch wso2-axis2.patch )
 	SET(SRPM_OUTPUT_FILES )
 
 	FOREACH(filename ${SRPM_FILES})
