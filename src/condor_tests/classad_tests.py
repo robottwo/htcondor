@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import re
 import classad
@@ -103,19 +103,6 @@ class TestClassad(unittest.TestCase):
         self.assertEquals(ad.get("foo"), "bar")
         ad["bar"] = "baz"
         self.assertEquals(ad.setdefault("bar", "foo"), "baz")
-
-    def test_update(self):
-        ad = classad.ClassAd()
-        ad.update({"1": 2})
-        self.assertTrue("1" in ad)
-        self.assertEquals(ad["1"], 2)
-        ad.update([("1",3)])
-        self.assertEquals(ad["1"], 3)
-        other = classad.ClassAd({"3": "5"})
-        ad.update(other)
-        del other
-        self.assertTrue("3" in ad)
-        self.assertEquals(ad["3"], "5")
 
 if __name__ == '__main__':
     unittest.main()

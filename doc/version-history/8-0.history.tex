@@ -52,6 +52,10 @@ The details of each version are described below.
 \item Fixed a performance problem with the \Condor{qedit} command that would cause the \Condor{schedd} to run very slowly when \Condor{qedit} is run on a large number of jobs.  \Condor{qedit} will no longer write an event to the job log. 
 \Ticket{3827}
 
+\item Fixed a problem where the \Code{classad} python module would return
+incorrect results when ClassAd caching is enabled.
+\Ticket{3879}
+
 \end{itemize}
 
 \noindent Known Bugs:
@@ -213,7 +217,15 @@ using \Condor{submit} with the \Opt{-spool} option to always fail.
 
 \begin{itemize}
 
-\item None.
+\item DAGMan recovery mode does not work for Pegasus-generated SUBDAGs.
+For SUBDAGs, doing \Condor{hold} or \Condor{release} on
+the \Condor{dagman} job, or stopping and re-starting the 
+\Condor{schedd} with the DAGMan
+job in the queue will result in failure of the DAG.  This can be
+avoided by doing a \Condor{rm} of the DAGMan job, which produces a Rescue
+DAG, and re-submitting the DAG; the Rescue DAG is automatically run.
+This bug was introduced in HTCondor version 8.0.1.
+\Ticket{3882}
 
 \end{itemize}
 
