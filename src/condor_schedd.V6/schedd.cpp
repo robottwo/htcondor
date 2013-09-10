@@ -5769,6 +5769,10 @@ Scheduler::contactStartd( ContactStartdArgs* args )
 		deadline_timeout = RequestClaimTimeout + 60;
 	}
 
+	classad::Value val; val.SetStringValue(Name);
+	classad::ExprTree *lit = classad::Literal::MakeLiteral(val);
+	jobAd->Insert(ATTR_CLIENT_SCHEDD_NAME, lit);
+
 	startd->asyncRequestOpportunisticClaim(
 		jobAd,
 		description.Value(),
@@ -8890,6 +8894,11 @@ mark_job_running(PROC_ID* job_id)
 		SetAttributeInt(job_id->cluster, job_id->proc,
 						ATTR_NUM_JOB_STARTS, num);
 	}
+
+		// Clear out the potential preemption attribtues.
+	DeleteAttribute(job_id->cluster, job_id->proc, ATTR_LAST_POTENTIAL_PREEMPTION_TIME);
+	DeleteAttribute(job_id->cluster, job_id->proc, ATTR_LAST_POTENTIAL_PREEMPTING_USER);
+
 	MarkJobClean(*job_id);
 }
 

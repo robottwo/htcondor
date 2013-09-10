@@ -1427,6 +1427,14 @@ accept_request_claim( Resource* rip, Claim* leftover_claim )
 		rip->r_cur->client()->sethost( hostname.Value() );
 	}
 
+		// Get the schedd name for this claim.
+	std::string scheddName;
+	if( (rip->r_cur->ad())->
+		EvalString( ATTR_CLIENT_SCHEDD_NAME, rip->r_cur->ad(), scheddName ) )
+	{
+		rip->r_cur->client()->setSchedd( scheddName );
+	}
+
 		// Get the owner of this claim out of the request classad.
 	if( (rip->r_cur->ad())->
 		EvalString( ATTR_USER, rip->r_cur->ad(), RemoteOwner ) == 0 ) { 

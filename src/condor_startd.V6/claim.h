@@ -95,6 +95,7 @@ public:
     char*   neggrp() {return c_neggrp;}
     bool    autorg() {return c_autorg;}
 	int     numPids() {return c_numPids;};
+	const std::string & schedd() const {return c_schedd;}
 
 	void	setuser(const char* user);
 	void	setowner(const char* owner);
@@ -107,6 +108,7 @@ public:
     void    setneggrp(const char* neggrp);
     void    setautorg(const bool autorg);
 	void    setNumPids(int numJobPids);
+	void	setSchedd(const std::string &schedd) {c_schedd = schedd;}
 
 		// send a message to the client and accountant that the claim
 		// is a being vacated
@@ -122,6 +124,7 @@ private:
 	char	*c_concurrencyLimits; // limits, if any
     char*   c_rmtgrp;   // the submitter's accounting group
     char*   c_neggrp;   // the negotiating accounting group
+	std::string c_schedd; // remote schedd name.
     bool    c_autorg;   // true if negotiated via autoregroup policy
 	int     c_numPids;
 

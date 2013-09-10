@@ -422,6 +422,26 @@ chirp_client_get_job_attr_delayed( struct chirp_client *c, const char *name, cha
 }
 
 DLLEXPORT int
+chirp_client_get_starter_attr( struct chirp_client *c, const char *name, char **expr )
+{
+	int result;
+	int actual;
+
+	result = simple_command(c,"get_starter_attr %s\n",name);
+	if(result>0) {
+		*expr = (char*)malloc(result);
+		if(*expr) {
+			actual = fread(*expr,1,result,c->rstream);
+			if(actual!=result) chirp_fatal_request("get_starter_attr");
+		} else {
+			chirp_fatal_request("get_starter_attr");
+		}
+	}
+
+	return result;
+}
+
+DLLEXPORT int
 chirp_client_set_job_attr( struct chirp_client *c, const char *name, const char *expr )
 {
 	return simple_command(c,"set_job_attr %s %s\n",name,expr);
@@ -431,6 +451,18 @@ DLLEXPORT int
 chirp_client_set_job_attr_delayed( struct chirp_client *c, const char *name, const char *expr )
 {
 	return simple_command(c,"set_job_attr_delayed %s %s\n",name,expr);
+}
+
+DLLEXPORT int
+chirp_client_set_last_commit( struct chirp_client *c, const char *expr )
+{
+	return simple_command(c,"set_last_commit %s\n",expr);
+}
+
+DLLEXPORT int
+chirp_client_set_expected_commit( struct chirp_client *c, const char *expr )
+{
+	return simple_command(c,"set_expected_commit %s\n",expr);
 }
 
 DLLEXPORT int

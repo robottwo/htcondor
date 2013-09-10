@@ -248,6 +248,8 @@ public:
 	CpuAttributes*	r_attr;		// Attributes of this resource
 	LoadQueue*		r_load_queue;  // Holds 1 minute avg % cpu usage
 	char*			r_name;		// Name of this resource
+	long long 		r_last_commit;	// Last commit of the job
+	long long 		r_expected_commit;	// Next expected commit of the job
 	int				r_id;		// CPU id of this resource (int form)
 	int				r_sub_id;	// Sub id of this resource (int form)
 	char*			r_id_str;	// CPU id of this resource (string form)

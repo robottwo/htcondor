@@ -43,6 +43,8 @@
 extern FILESQL *FILEObj;
 
 Resource::Resource( CpuAttributes* cap, int rid, bool multiple_slots, Resource* _parent )
+	: r_last_commit(-1),
+	  r_expected_commit(-1)
 {
 	MyString tmp;
 	const char* tmpName;
@@ -1781,6 +1783,19 @@ Resource::publish( ClassAd* cap, amask_t mask )
 	SetMyTypeName( *cap,STARTD_ADTYPE );
 	SetTargetTypeName( *cap, JOB_ADTYPE );
 
+		// Put in attributes from the starter related to commit
+		// Note we must remove these attributes if not set or the job is no longer running.
+	if (r_state && (r_state->state() == claimed_state || r_state->state() == preempting_state || r_state->state() == backfill_state))
+	{
+		if (r_expected_commit >= 0) cap->InsertAttr( ATTR_EXPECTED_COMMIT, r_expected_commit ); else cap->Delete(ATTR_EXPECTED_COMMIT);
+		if (r_last_commit >= 0) cap->InsertAttr( ATTR_LAST_COMMIT, r_last_commit ); else cap->Delete(ATTR_LAST_COMMIT);
+	}
+	else
+	{
+		cap->Delete(ATTR_EXPECTED_COMMIT);
+		cap->Delete(ATTR_LAST_COMMIT);
+	}
+
 		// Insert attributes directly in the Resource object, or not
 		// handled by other objects.
 
@@ -1930,6 +1945,19 @@ Resource::publish( ClassAd* cap, amask_t mask )
 		ptr = NULL;
 	}
 	cap->AssignExpr( ATTR_MACHINE_MAX_VACATE_TIME, ptr ? ptr : "0" );
+
+		// Put in attributes from the starter
+		// Note we must remove these attributes if not set or the job is no longer running.
+	if (r_state && (r_state->state() == claimed_state || r_state->state() == preempting_state || r_state->state() == backfill_state))
+	{
+		if (r_expected_commit >= 0) cap->InsertAttr( ATTR_EXPECTED_COMMIT, r_expected_commit ); else cap->Delete(ATTR_EXPECTED_COMMIT);
+		if (r_last_commit >= 0) cap->InsertAttr( ATTR_LAST_COMMIT, r_last_commit ); else cap->Delete(ATTR_LAST_COMMIT);
+	}
+	else
+	{
+		cap->Delete(ATTR_EXPECTED_COMMIT);
+		cap->Delete(ATTR_LAST_COMMIT);
+	}
 
 	free(ptr);
     

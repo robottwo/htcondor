@@ -211,6 +211,14 @@ Claim::publish( ClassAd* cad, amask_t how_much )
 			cad->Insert( line.Value() );
 		}
 
+		std::string schedd = c_client->schedd();
+		if( schedd.size() )
+		{
+			classad::Value val; val.SetStringValue(schedd);
+			classad::ExprTree *lit = classad::Literal::MakeLiteral(val);
+			cad->Insert(ATTR_CLIENT_SCHEDD_NAME, lit);
+		}
+
 		tmp = c_client->getConcurrencyLimits();
 		if (tmp) {
 			cad->Assign(ATTR_CONCURRENCY_LIMITS, tmp);

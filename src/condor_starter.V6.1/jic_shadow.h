@@ -241,8 +241,18 @@ public:
 		/* Record an attribute to update */
 	bool recordDelayedUpdate( const std::string &name, const classad::ExprTree &expr );
 
-		/* Return an attribute from the combination of the delayed ad and the starter */
+		/* Return an attribute from the combination of the delayed ad and the 
+		 * starter's version of the job */
 	std::auto_ptr<classad::ExprTree> getDelayedUpdate( const std::string &name );
+
+		/* Return an attribute from the starter ad */
+	std::auto_ptr<classad::ExprTree> getStarterAttribute( const std::string &name );
+
+		/* Record the next expected commit of the job */
+	bool recordExpectedCommit( const classad::ExprTree &expr );
+
+		/* Record the last commit of the job */
+	bool recordLastCommit( const classad::ExprTree &expr );
 
 	virtual bool wroteChirpConfig() { return m_wrote_chirp_config; }
 	virtual const std::string chirpConfigFilename() { return m_chirp_config_filename; }
@@ -273,8 +283,10 @@ private:
 
 		/** Send an update ClassAd to the startd.
 			@param ad Update ad
+			@param update_type: 0 for a job update, 1 for the final job update
+			and 2 for the starter update.
 		 */
-	void updateStartd( ClassAd *ad, bool final_update );
+	void updateStartd( ClassAd *ad, int update_type );
 
 		/** Read all the relevent attributes out of the job ad and
 			decide if we need to transfer files.  If so, instantiate a

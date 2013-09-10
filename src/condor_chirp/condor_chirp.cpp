@@ -377,7 +377,7 @@ int chirp_get_job_attr(int argc, char **argv) {
 int chirp_get_job_attr_delayed(int argc, char **argv) {
 	if (argc != 3) {
 		printf("condor_chirp get_job_attr_delayed AttributeName\n");
-		printf("This retrieves the attribute value from the local starter.\n");
+		printf("This retrieves the job attribute value from the local starter.\n");
 		printf("While this has no impact on the schedd, the attribute value may\n");
 		printf("differ from the current one in the schedd, depending when the last\n");
 		printf("schedd->starter update occurred.\n");
@@ -389,6 +389,22 @@ int chirp_get_job_attr_delayed(int argc, char **argv) {
 
 	char *p = 0;
 	int len = chirp_client_get_job_attr_delayed(client, argv[2], &p);
+	printf("%.*s\n", len, p);
+	DISCONNECT_AND_RETURN(client, 0);
+}
+
+int chirp_get_starter_attr(int argc, char **argv) {
+	if (argc != 3) {
+		printf("condor_chirp get_starter_attr AttributeName\n");
+		printf("This retrieves the attribute value from the local starter.\n");
+		return -1;
+	}
+
+	struct chirp_client *client = NULL;
+	CONNECT_STARTER(client);
+
+	char *p = 0;
+	int len = chirp_client_get_starter_attr(client, argv[2], &p);
 	printf("%.*s\n", len, p);
 	DISCONNECT_AND_RETURN(client, 0);
 }
@@ -429,6 +445,44 @@ int chirp_set_job_attr_delayed(int argc, char **argv) {
 	CONNECT_STARTER(client);
 
 	int rval = chirp_client_set_job_attr_delayed(client, argv[2], argv[3]);
+	DISCONNECT_AND_RETURN(client, rval);
+}
+
+/*
+ * chirp_set_last_commit
+ * Do an update to the starter, denoting when the last commit of the job's work was made.
+ */
+
+int chirp_set_last_commit(int argc, char **argv) {
+	if (argc != 3) {
+		printf("condor_chirp set_last_commit AttributeValue\n");
+		printf("This will inform the starter when the job last committed its work\n");
+		return -1;
+	}
+
+	struct chirp_client *client = 0;
+	CONNECT_STARTER(client);
+
+	int rval = chirp_client_set_last_commit(client, argv[2]);
+	DISCONNECT_AND_RETURN(client, rval);
+}
+
+/*
+ * chirp_set_expected_commit
+ * Do an update to the starter, denoting when the last commit of the job's work was made.
+ */
+
+int chirp_set_expected_commit(int argc, char **argv) {
+	if (argc != 3) {
+		printf("condor_chirp set_expected_commit AttributeValue\n");
+		printf("This will inform the starter when the job thinks the next commit will be made.\n");
+		return -1;
+	}
+
+	struct chirp_client *client = 0;
+	CONNECT_STARTER(client);
+
+	int rval = chirp_client_set_expected_commit(client, argv[2]);
 	DISCONNECT_AND_RETURN(client, rval);
 }
 
@@ -937,6 +991,9 @@ void usage() {
 	printf("condor_chirp get_job_attr_delayed job_attribute\n");
 	printf("condor_chirp set_job_attr job_attribute attribute_value\n");
 	printf("condor_chirp set_job_attr_delayed job_attribute attribute_value\n");
+        printf("condor_chirp get_starter_attr starter_attribute\n");
+        printf("condor_chirp set_last_commit attribute_value");
+        printf("condor_chirp set_expected_commit attribute_value");
 	printf("condor_chirp ulog text\n");
 	printf("condor_chirp read [-offset offset] [-stride length skip] "
 		"remote_file length\n");
@@ -979,10 +1036,16 @@ main(int argc, char **argv) {
 		ret_val = chirp_get_job_attr_delayed(argc, argv);
 	} else if (strcmp("get_job_attr", argv[1]) == 0) {
 		ret_val = chirp_get_job_attr(argc, argv);
+	} else if (strcmp("get_starter_attr", argv[1]) == 0) {
+		ret_val = chirp_get_starter_attr(argc, argv);
 	} else if (strcmp("set_job_attr_delayed", argv[1]) == 0) {
 		ret_val = chirp_set_job_attr_delayed(argc, argv);
 	} else if (strcmp("set_job_attr", argv[1]) == 0) {
 		ret_val = chirp_set_job_attr(argc, argv);
+	} else if (strcmp("set_last_commit", argv[1]) == 0) {
+		ret_val = chirp_set_last_commit(argc, argv);
+	} else if (strcmp("set_expected_commit", argv[1]) == 0) {
+		ret_val = chirp_set_expected_commit(argc, argv);
 	} else if (strcmp("ulog", argv[1]) == 0) {
 		ret_val = chirp_ulog(argc, argv);
 	} else if (strcmp("read", argv[1]) == 0) {
