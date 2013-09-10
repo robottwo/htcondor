@@ -29,8 +29,10 @@
 typedef struct proc_id {
 	int		cluster;
 	int		proc;
+#if defined(__cplusplus)
 	proc_id(int c, int p) : cluster(c), proc(p) {}
 	proc_id() : cluster(-1), proc(-1) {}
+#endif
 } PROC_ID;
 
 #if defined(__cplusplus)
