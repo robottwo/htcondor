@@ -992,8 +992,8 @@ void usage() {
 	printf("condor_chirp set_job_attr job_attribute attribute_value\n");
 	printf("condor_chirp set_job_attr_delayed job_attribute attribute_value\n");
         printf("condor_chirp get_starter_attr starter_attribute\n");
-        printf("condor_chirp set_last_commit attribute_value");
-        printf("condor_chirp set_expected_commit attribute_value");
+        printf("condor_chirp set_last_commit attribute_value\n");
+        printf("condor_chirp set_expected_commit attribute_value\n");
 	printf("condor_chirp ulog text\n");
 	printf("condor_chirp read [-offset offset] [-stride length skip] "
 		"remote_file length\n");
