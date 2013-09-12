@@ -3640,6 +3640,13 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
 			request.Assign(ATTR_SUBMITTER_GROUP_QUOTA,temp_groupQuota);
 		}
 
+		// Add the queue age into the job ad.
+		long long qdate;
+		if (request.EvaluateAttrInt(ATTR_Q_DATE, qdate)) 
+		{       
+			request.InsertAttr(ATTR_QUEUE_AGE, beginTime - qdate);
+		}       
+
 		OptimizeJobAdForMatchmaking( &request );
 
 		if( IsDebugLevel( D_JOB ) ) {
@@ -4065,12 +4072,6 @@ matchmakingAlgorithm(const char *scheddName, const char *scheddAddr, ClassAd &re
 		}
 		long long uncommitted = beginTime - lastcommit;
 		candidate->InsertAttr(ATTR_UNCOMMITTED_TIME, uncommitted < 0 ? 0 : uncommitted);
-
-		long long qdate;
-		if (candidate->EvaluateAttrInt(ATTR_Q_DATE, qdate))
-		{
-			candidate->InsertAttr(ATTR_QUEUE_AGE, beginTime - qdate);
-		}
 
 			// the candidate offer and request must match
 		bool is_a_match = IsAMatch(&request, candidate);
