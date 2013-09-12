@@ -264,6 +264,38 @@ boost::python::object ClassAdWrapper::setdefault(const std::string attr, boost::
     return result;
 }
 
+void ClassAdWrapper::update(boost::python::object source)
+{
+    // First, try to use ClassAd's built-in update.
+    boost::python::extract<ClassAdWrapper&> source_ad_obj(source);
+    if (source_ad_obj.check())
+    {
+        this->Update(source_ad_obj()); return;
+    }
+
+    // Next, see if we have a dictionary-like object.
+    if (PyObject_HasAttrString(source.ptr(), "items"))
+    {
+        return this->update(source.attr("items")());
+    }
+    if (!PyObject_HasAttrString(source.ptr(), "__iter__")) THROW_EX(ValueError, "Must provide a dictionary-like object to update()");
+
+    boost::python::object iter = source.attr("__iter__")();
+    while (true) {
+        PyObject *pyobj = PyIter_Next(iter.ptr());
+        if (!pyobj) break;
+        if (PyErr_Occurred()) {
+            boost::python::throw_error_already_set();
+        }
+
+        boost::python::object obj = boost::python::object(boost::python::handle<>(pyobj));
+
+        boost::python::tuple tup = boost::python::extract<boost::python::tuple>(obj);
+        std::string attr = boost::python::extract<std::string>(tup[0]);
+        InsertAttrObject(attr, tup[1]);
+    }
+}
+
 ExprTreeHolder ClassAdWrapper::LookupExpr(const std::string &attr) const
 {
     classad::ExprTree * expr = Lookup(attr);
