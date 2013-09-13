@@ -5791,7 +5791,7 @@ Matchmaker::PushScheddPotentialPreemptions(const std::string &schedd_addr, const
 		unparser.Unparse(attr_str, exprTree.get());
 		const PROC_ID &job = it->second.getRemoteJobID();
 		dprintf (D_FULLDEBUG, "%s = %s\n", ATTR_LAST_POTENTIAL_PREEMPTION_TIME, attr_str.c_str());
-		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTION_TIME, attr_str.c_str()))
+		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTION_TIME, attr_str.c_str(), SETDIRTY))
 		{
 			throw ScheddException("Unable to edit job last potential preemption time");
 		}
@@ -5801,7 +5801,7 @@ Matchmaker::PushScheddPotentialPreemptions(const std::string &schedd_addr, const
 		attr_str.clear();
 		unparser.Unparse(attr_str, exprTree.get());
 		dprintf (D_FULLDEBUG, "%s = %s\n", ATTR_LAST_POTENTIAL_PREEMPTING_USER, attr_str.c_str());
-		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTING_USER, attr_str.c_str()))
+		if (-1 == SetAttribute(job.cluster, job.proc, ATTR_LAST_POTENTIAL_PREEMPTING_USER, attr_str.c_str(), SETDIRTY))
 		{
 			throw ScheddException("Unable to edit job last potential preemption user");
 		}
