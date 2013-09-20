@@ -36,6 +36,9 @@ use Condor;
 use CondorUtils;
 use CondorPersonal;
 
+use base 'Exporter';
+
+our @EXPORT = qw(runCondorTool runToolNTimes);
 my %securityoptions =
 (
 "NEVER" => "1",
@@ -1465,23 +1468,39 @@ sub runCondorTool
 	my $quiet = shift;
 	my $options = shift;
 	my $count = 0;
+	my %altoptions = ();
+
+	# provide an expect_result=>ANY as a hash reference options
+	$altoptions{expect_result} = \&ANY;
+	if(defined $options) {
+		#simply use altoptions
+		${$options}{expect_result} = \&ANY;
+	} else {
+		$options = \%altoptions;
+	}
+
+	# Add a message to runcmd output
+	${$options}{emit_string} = "runCondorTool: Attempt: <$count>";
+	#Condor::DebugLevel(4);
 
 	# clean array before filling
 
-	my $attempts = 6;
+	my $attempts = 15;
 	$count = 0;
 	my $hashref;
 	while( $count < $attempts) {
+		#print "runCondorTool: Attempt: <$count>\n";
 		@{$arrayref} = (); #empty return array...
 		my @tmparray;
 		debug( "Try command <$cmd>\n",4);
 		#open(PULL, "_condor_TOOL_TIMEOUT_MULTIPLIER=4 $cmd 2>$catch |");
 
-		$hashref = runcmd("_condor_TOOL_TIMEOUT_MULTIPLIER=4 $cmd", $options);
+		$hashref = runcmd("_condor_TOOL_TIMEOUT_MULTIPLIER=10 $cmd", $options);
 		my @output =  @{${$hashref}{"stdout"}};
 		my @error =  @{${$hashref}{"stderr"}};
 
 		$status = ${$hashref}{"exitcode"};
+		#print "runCondorTool: Status was <$status>\n";
 		debug("Status is $status after command\n",4);
 		if( $status != 0 ) {
 				#print "************* std out ***************\n";
@@ -1514,17 +1533,59 @@ sub runCondorTool
 			my $current_time = time;
 			$delta_time = $current_time - $start_time;
 			debug("runCondorTool: its been $delta_time since call\n",4);
+			#Condor::DebugLevel(2);
 			return(1);
 		}
 		$count = $count + 1;
 		debug("runCondorTool: iteration<$count> failed sleep 10 * $count \n",1);
+		my $delaynow = 10*$count;
+		if(!defined $quiet) {
+			print "runCondorTool: this delay <$delaynow>\n";
+		}
 		sleep((10*$count));
 	}
 	debug( "runCondorTool: $cmd failed!\n",1);
+	#Condor::DebugLevel(2);
 
 	return(0);
 }
 
+sub runToolNTimes
+{
+	my $cmd = shift;
+    my $goal = shift;
+    my $wantoutput = shift;
+
+    my $count = 0;
+    my $stop = 0;
+    my @cmdout = ();
+    my @date = ();
+	my @outarrray;
+	my $cmdstatus = 0;
+    $stop = $goal;
+
+    while($count < $stop) {
+        @cmdout = ();
+		@outarrray = ();
+        @date = ();
+        @date = `date`;
+        chomp $date[0];
+        #print "$date[0] $cmd $count\n";
+        #@cmdout = `$cmd`;
+		$cmdstatus = runCondorTool($cmd, \@outarrray, 2);
+		if(!$cmdstatus) {
+			print "runCondorTool<$cmd> attempt<$count> SHOULD NOT fail!\n";
+		}
+
+        if(defined $wantoutput) {
+            foreach my $line (@outarrray) {
+                print "$line\n";
+            }
+        }
+        $count += 1;
+    }
+	return($cmdstatus);
+}
 
 # Lets be able to drop some extra information if runCondorTool
 # can not do what it is supposed to do....... short and full

@@ -29,7 +29,15 @@ The details of each version are described below.
 
 \begin{itemize}
 
-\item None.
+\item Email alerts about file transfers taking longer than
+\Macro{MAX\_TRANSFER\_QUEUE\_AGE} are now grouped together
+to reduce the number of email messages that are sent.
+
+\item Floating point values in ClassAds are now printed in a more
+human-readable format while retaining 64-bit double precision.
+In version 8.1.1, these values were always printed in scientific
+notation.
+\Ticket{3928}
 
 \end{itemize}
 
@@ -45,10 +53,28 @@ The details of each version are described below.
 
 \begin{itemize}
 
+\item If a standard universe job exited and never used a checkpoint
+server, two spurious error messages would be logged to the 
+SchedLog, as it tried to remove the old checkpoint images from the
+non-existent checkpoint server.  This bug has been fixed.
+\Ticket{3919}
+
+\item If the config knob STARTER\_RLIMIT\_AS is set to the default
+value, there is no limit.  However, in this case, we logged that the
+limit was set to 0 mb, which means ulimited to the kernel, but
+was confusing.  Now, no message is logged in the default case.
+\Ticket{3914}
+
 \item Improved how the \condor{schedd} notifies the \condor{shadow}
 and \condor{gridmanager} about modifications to job ads made via
 \condor{qedit}.
 \Ticket{3909}
+
+\item The grid universe now uses the correct executable file when
+\SubmitCmd{copy\_to\_spool} is set to \Expr{True}.
+Previously, the executable file named in the submit file would be copied
+to the remote server, rather than the copy stored in the spool directory.
+\Ticket{3589}
 
 \end{itemize}
 
@@ -77,8 +103,8 @@ and \condor{gridmanager} about modifications to job ads made via
 
 \begin{itemize}
 
-\item HTCondor version 8.1.1 not yet released.
-%\item HTCondor version 8.1.1 released on Month Date, 2013.
+\item HTCondor version 8.1.1 released on September 17, 2013.
+This release contains all bug fixes from the stable release version 8.0.2.
 
 \end{itemize}
 
@@ -131,6 +157,13 @@ way for file transfers with the \Condor{ft-gahp} to work.
 
 \begin{itemize}
 
+\item The new configuration variable \Macro{USE\_RESOURCE\_REQUEST\_COUNTS}
+is a boolean value that defaults to \Expr{True}, 
+reducing the latency of negotiation 
+when there are many jobs next to each other in the queue 
+with the same auto cluster, and many matches are being made.
+\Ticket{3585}
+
 \item Four new machine ClassAd attributes are advertised.
 \Attr{TotalJobStarts} is the total number of jobs started by 
 this \Condor{startd} daemon since it booted. 
@@ -182,11 +215,24 @@ that caused file transfers to fail if one of the two daemons was older
 than version 8.1.0.
 \Ticket{3856}
 
-\ticket Fixed a bug that caused substitution in configuration values to ignore
-per-daemon overrides. This is a long-standing bug that may result in subtle changes
-in the way your configuration files are processed.
-See section \ref{sec:Config-File-Macros} for an example.
+\item Fixed a bug that caused substitution in configuration variable
+evaluation to ignore per-daemon overrides. 
+This is a long standing bug that may result in subtle changes
+to the way your configuration files are processed.
+An example of how substitution works with the per-daemon overrides
+is in section \ref{sec:Config-File-Macros}.
 \Ticket{3822}
+
+\item Fixed a bug that caused the command
+\begin{verbatim}
+  condor_submit -
+\end{verbatim}
+to be interpreted as an interactive submit,
+rather than a request to read input from \File{stdin}.
+\Condor{qsub} was also modified to be immune to this bug,
+such that it will still work with other versions of HTCondor containing
+the bug.
+\Ticket{3902}
 
 \end{itemize}
 

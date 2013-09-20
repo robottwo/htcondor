@@ -1611,7 +1611,10 @@ Resource::eval_expr( const char* expr_name, bool fatal, bool check_vanilla )
 			// otherwise, fall through and try the non-vm version
 	}
 	if( (r_classad->EvalBool(expr_name, r_cur ? r_cur->ad() : NULL , tmp) ) == 0 ) {
-		if( fatal ) {
+		
+        dprintf( D_ALWAYS, "WARNING: EvalBool of %s resulted in ERROR or UNDEFINED\n", expr_name );
+        
+        if( fatal ) {
 			dprintf(D_ALWAYS, "Can't evaluate %s in the context of following ads\n", expr_name );
 			dPrintAd(D_ALWAYS, *r_classad);
 			dprintf(D_ALWAYS, "=============================\n");
@@ -1620,7 +1623,7 @@ Resource::eval_expr( const char* expr_name, bool fatal, bool check_vanilla )
 			} else {
 				dprintf( D_ALWAYS, "<no job ad>\n" );
 			}
-			EXCEPT( "Can't evaluate %s", expr_name );
+			EXCEPT( "Invalid evaluation of %s was marked as fatal", expr_name );
 		} else {
 				// anything else for here?
 			return -1;
@@ -1653,31 +1656,28 @@ Resource::evaluateHibernate( MyString &state_str ) const
 int
 Resource::eval_kill()
 {
-		// fatal if undefined, check vanilla
-	return eval_expr( "KILL", true, true );
+	return eval_expr( "KILL", false, true );
 }
 
 
 int
 Resource::eval_preempt( void )
 {
-		// fatal if undefined, check vanilla
-	return eval_expr( "PREEMPT", true, true );
+	return eval_expr( "PREEMPT", false, true );
 }
 
 
 int
 Resource::eval_suspend( void )
 {
-		// fatal if undefined, check vanilla
-	return eval_expr( "SUSPEND", true, true );
+	return eval_expr( "SUSPEND", false, true );
 }
 
 
 int
 Resource::eval_continue( void )
 {
-	return (m_bUserSuspended)?false:eval_expr( "CONTINUE", true, true );
+	return (m_bUserSuspended)?false:eval_expr( "CONTINUE", false, true );
 }
 
 
