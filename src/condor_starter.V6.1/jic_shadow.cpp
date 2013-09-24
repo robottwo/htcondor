@@ -1935,11 +1935,11 @@ JICShadow::getStarterAttribute( const std::string &attr_name )
 	dprintf(D_FULLDEBUG, "Looking up starter attribute named %s.\n", attr_name.c_str());
 
 	std::auto_ptr<classad::ExprTree> expr;
-	if (!mach_ad) return expr;
+	if (!mach_ad_ptr) return expr;
 
 	std::string addr, name;
-	if (!mach_ad->EvaluateAttrString(ATTR_MY_ADDRESS, addr)) return expr;
-	if (!mach_ad->EvaluateAttrString(ATTR_NAME, name)) return expr;
+	if (!mach_ad_ptr->EvaluateAttrString(ATTR_MY_ADDRESS, addr)) return expr;
+	if (!mach_ad_ptr->EvaluateAttrString(ATTR_NAME, name)) return expr;
 
 	DCStartd startd(addr.c_str());
 
