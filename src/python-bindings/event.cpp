@@ -76,8 +76,8 @@ void export_event_reader()
         .def("__iter__", &EventIterator::pass_through)
         ;
 
-    def("readEvents", readEventsFile, boost::python::with_custodian_and_ward_postcall<0, 1>());
-    def("readEvents", readEventsFile2, boost::python::with_custodian_and_ward_postcall<0, 1>(),
+    def("read_events", readEventsFile, boost::python::with_custodian_and_ward_postcall<0, 1>());
+    def("read_events", readEventsFile2, boost::python::with_custodian_and_ward_postcall<0, 1>(),
         "Parse input HTCondor event log into an iterator of ClassAds.\n"
         ":param input: A file pointer.\n"
         ":param is_xml: Set to true if the log file is XML-formatted (defaults to false).\n"
