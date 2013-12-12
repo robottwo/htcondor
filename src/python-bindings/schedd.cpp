@@ -778,7 +778,7 @@ void export_schedd()
             ":param proc: Job proc.\n"
             ":param filename: Filename of proxy to delegate or upload to job.\n"
             ":param lifetime: Desired lifetime (in seconds) of delegated proxy; 0 indicates to not shorten"
-            " the job lifetime.  -1 indicates to use the value of parameter DELEGATE_JOB_GSI_CREDENTIALS_LIFETIME."
+            " the proxy lifetime.  -1 indicates to use the value of parameter DELEGATE_JOB_GSI_CREDENTIALS_LIFETIME."
             " NOTE: depending on the lifetime of the proxy in `filename`, the resulting lifetime may be shorter"
             " than the desired lifetime.\n"
             ":return: Lifetime of the resulting job proxy in seconds.")
