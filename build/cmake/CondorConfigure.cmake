@@ -157,6 +157,8 @@ if( NOT WINDOWS)
 
 	check_library_exists(dl dlopen "" HAVE_DLOPEN)
 	check_symbol_exists(res_init "sys/types.h;netinet/in.h;arpa/nameser.h;resolv.h" HAVE_DECL_RES_INIT)
+	check_symbol_exists(TCP_KEEPIDLE "netinet/in.h" HAVE_TCP_KEEPIDLE)
+	check_symbol_exists(TCP_KEEPALIVE "netinet/in.h" HAVE_TCP_KEEPALIVE)
 	check_symbol_exists(MS_PRIVATE "sys/mount.h" HAVE_MS_PRIVATE)
 	check_symbol_exists(MS_SHARED  "sys/mount.h" HAVE_MS_SHARED)
 	check_symbol_exists(MS_SLAVE  "sys/mount.h" HAVE_MS_SLAVE)
