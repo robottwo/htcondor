@@ -1083,6 +1083,8 @@ Scheduler::count_jobs()
 		Owners[i].OldFlockLevel = 0;
 		Owners[i].NegotiationTimestamp = current_time;
 		Owners[i].PrioSet.clear();
+		Owners[i].WeightedJobsRunning = 0;
+		Owners[i].WeightedJobsIdle = 0;
 	}
 
 	GridJobOwners.clear();
@@ -1226,6 +1228,7 @@ Scheduler::count_jobs()
 	// TJ: get daemon-core message-time here and pass into stats.Tick()
 	stats.Tick();
 	stats.JobsSubmitted = GetJobQueuedCount();
+	stats.Autoclusters = autocluster.getNumAutoclusters();
 
 	OtherPoolStats.Tick();
 	// because cad is really m_adSchedd which is persistent, we have to 
@@ -1524,6 +1527,7 @@ int Scheduler::make_ad_list(
    stats.Tick(now);
    stats.JobsSubmitted = GetJobQueuedCount();
    stats.ShadowsRunning = numShadows;
+   stats.Autoclusters = autocluster.getNumAutoclusters();
 
    OtherPoolStats.Tick(now);
    // because cad is a copy of m_adSchedd which is persistent, we have to 
@@ -9788,6 +9792,7 @@ Scheduler::jobExitCode( PROC_ID job_id, int exit_code )
 	time_t updateTime = time(NULL);
 	stats.Tick(updateTime);
 	stats.JobsSubmitted = GetJobQueuedCount();
+	stats.Autoclusters = autocluster.getNumAutoclusters();
 
 	MyString other;
 	ScheddOtherStats * other_stats = NULL;
@@ -10489,6 +10494,7 @@ Scheduler::Init()
 
     stats.Reconfig();
 
+	PRAGMA_REMIND("TJ: These should be moved into the default config table")
 		// set defaults for rounding attributes for autoclustering
 		// only set these values if nothing is specified in condor_config.
 	MyString tmpstr;
