@@ -200,8 +200,6 @@ Patch10: config_batch_gahp_path.patch
 %endif
 
 # HCC patches
-# See gt3158
-Patch14: 0001-Apply-the-user-s-condor_config-last-rather-than-firs.patch
 Patch15: wso2-axis2.patch
 
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
@@ -648,7 +646,6 @@ exit 0
 %endif
 
 %if 0%{?hcc}
-%patch14 -p1
 %patch15 -p0
 %endif
 
@@ -1022,6 +1019,8 @@ rm -rf %{buildroot}%{_mandir}/man1/uniq_pid_undertaker.1*
 rm -rf %{buildroot}%{_datadir}/condor/python/{htcondor,classad}.so
 rm -rf %{buildroot}%{_datadir}/condor/{libpyclassad*,htcondor,classad}.so
 
+rm -rf %{buildroot}%{_sbindir}/condor_testwritelog
+
 # Install BOSCO
 mkdir -p %{buildroot}%{python_sitelib}
 mv %{buildroot}%{_libexecdir}/condor/campus_factory/python-lib/GlideinWMS %{buildroot}%{python_sitelib}
@@ -1142,6 +1141,11 @@ rm -rf %{buildroot}
 %_libexecdir/condor/interactive.sub
 %_libexecdir/condor/condor_dagman_metrics_reporter
 %_libexecdir/condor/condor_gangliad
+%_libexecdir/condor/condor_ckpt_probe
+%_libexecdir/condor/condor_history_helper
+%_libexecdir/condor/condor_pid_ns_init
+%_libexecdir/condor/condor_urlfetch
+%_libexecdir/condor/config_fetch
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
 %_mandir/man1/condor_chirp.1.gz
@@ -1255,6 +1259,7 @@ rm -rf %{buildroot}
 %attr(6755, root, root) %_sbindir/condor_root_switchboard
 %_sbindir/condor_schedd
 %_sbindir/condor_shadow
+%_sbindir/condor_sos
 %_sbindir/condor_startd
 %_sbindir/condor_starter
 %_sbindir/condor_store_cred
