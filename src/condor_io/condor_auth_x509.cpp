@@ -56,7 +56,7 @@ unsigned int hashFuncString( const std::string &key )
 	return hashFuncChars(key.c_str());
 }
 
-GlobusMappingTable Condor_Auth_X509::m_mapping = NULL;
+Condor_Auth_X509::GlobusMappingTable *Condor_Auth_X509::m_mapping = NULL;
 
 //----------------------------------------------------------------------
 // Implementation
@@ -501,12 +501,13 @@ int Condor_Auth_X509::nameGssToLocal(const char * GSSClientname)
 		auth_name_to_map = GSSClientname;
 	}
 
-	classad_shared_ptr value;
+	globus_mapping_entry_ptr value;
 	time_t now = 0;
-	gsi_cache_expiry = param_integer("GSI_MAPPING_CACHE_EXPIRATION", 300);
+	time_t gsi_cache_expiry = param_integer("GSI_MAPPING_CACHE_EXPIRATION", 300);
 	if (gsi_cache_expiry && (m_mapping->lookup(auth_name_to_map, value) == 0)) {
 		now = time(NULL);
 		if (now < value->expiry_time) {
+			dprintf(D_SECURITY, "Using Globus mapping result from the cache.\n");
 			if (value->name.size()) {
 				tmp_user = strdup(value->name.c_str());
 			}
