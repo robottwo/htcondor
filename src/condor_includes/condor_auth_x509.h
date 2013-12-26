@@ -152,6 +152,15 @@ class Condor_Auth_X509 : public Condor_Auth_Base {
     static Grid_Map_t * GridMap;
 #endif
 	static bool m_globusActivated;
+
+	typedef struct globus_mapping_entry_s {
+		std::string name;
+		time_t expiry_time;
+	} globus_mapping_entry_t;
+	typedef classad_shared_ptr<globus_mapping_entry_t> globus_mapping_entry_ptr;
+	typedef HashTable<std::string, globus_mapping_entry_ptr> GlobusMappingTable;
+	static GlobusMapping m_mapping;
+
 };
 
 #endif
