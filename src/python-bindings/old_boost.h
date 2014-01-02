@@ -30,8 +30,19 @@ inline boost::python::object py_import(boost::python::str name)
   return boost::python::object(module);
 }
 
+inline bool py_hasattr(boost::python::object obj, std::string const &attrName) {
+     return PyObject_HasAttrString(obj.ptr(), attrName.c_str());
+}
+
 #define THROW_EX(exception, message) \
     { \
         PyErr_SetString(PyExc_ ##exception, message); \
         boost::python::throw_error_already_set(); \
     }
+
+#define THROW_ERRNO(exception) \
+    { \
+        PyErr_SetFromErrno(PyExc_ ##exception); \
+        boost::python::throw_error_already_set(); \
+    }
+
