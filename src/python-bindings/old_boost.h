@@ -31,7 +31,9 @@ inline boost::python::object py_import(boost::python::str name)
 }
 
 inline bool py_hasattr(boost::python::object obj, std::string const &attrName) {
-     return PyObject_HasAttrString(obj.ptr(), attrName.c_str());
+    // Const cast is necessary because python 2.4 (RHEL5) marks the second arg
+    // as a (char *), even though it is not modified.
+    return PyObject_HasAttrString(obj.ptr(), const_cast<char*>(attrName.c_str()));
 }
 
 #define THROW_EX(exception, message) \
