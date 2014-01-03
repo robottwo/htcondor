@@ -129,8 +129,14 @@ if (NOT PROPER) # AND (NOT Boost_FOUND OR SYSTEM_NOT_UP_TO_SNUFF) )
 		message(STATUS "Bootstrapping python for boost")
 		set(Boost_PYTHON2_LIBRARY "external" PARENT_SCOPE)
 		set(BOOTSTRAP_PYTHON2_OPTION "--with-python=${PYTHON2_EXECUTABLE}")
+		set(BUILD_OPTIONS ${BUILD_OPTIONS} "python=${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
 	else ()
 		set(BOOTSTRAP_PYTHON2_OPTION )
+	endif()
+	if (BUILD_PYTHON3)
+		file(APPEND "${BOOST_STAGE}/user-config.jam" "using python : ${PYTHON3_VERSION_MAJOR}.${PYTHON3_VERSION_MINOR} : ${PYTHON3_EXECUTABLE} : ${PYTHON3_INCLUDE_DIR}")
+	else ()
+		file(APPEND "${BOOST_STAGE}/user-config.jam" "")
 	endif()
 
 	# so the idea of privately staging boost is silly.
@@ -141,7 +147,9 @@ if (NOT PROPER) # AND (NOT Boost_FOUND OR SYSTEM_NOT_UP_TO_SNUFF) )
 		#--Patch step ----------
 		 PATCH_COMMAND ${BOOST_PATCH}
 		#--Configure step ----------
-		 CONFIGURE_COMMAND ${BOOTSTRAP} --prefix=${BOOST_INSTALL_LOC} ${BOOTSTRAP_PYTHON2_OPTION} ${CMD_TERM} echo "Configure complete"
+		 CONFIGURE_COMMAND ${BOOTSTRAP} --prefix=${BOOST_INSTALL_LOC} ${BOOTSTRAP_PYTHON2_OPTION} ${CMD_TERM}
+			cmake -E copy "${BOOST_STAGE}/user-config.jam" tools/build/v2/user-config.jam ${CMD_TERM}
+			echo "Configure complete"
 		#--Build Step ----------
 		BUILD_COMMAND ${EXEC}bjam ${BOOST_MIN_BUILD_DEP} --prefix=${BOOST_INSTALL_LOC} --libdir=${BOOST_INSTALL_LOC}/lib define=BOOST_HAS_THREADS ${BUILD_OPTIONS} toolset=${TOOLSET} link=static install
 		BUILD_IN_SOURCE 1

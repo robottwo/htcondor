@@ -103,18 +103,15 @@ set(PYTHONLIBS_FOUND) # Unsets
 ##################################################
 # PYTHON3 discovery
 ##################################################
-set( PythonLibs_FIND_VERSION "3" )
 if(NOT WINDOWS)
   include (FindPython3Libs)
 endif(NOT WINDOWS)
-if (DEFINED PYTHONLIBS_VERSION_STRING)
+if (DEFINED PYTHON3LIBS_VERSION_STRING)
   set(PythonInterp_FIND_VERSION "${PYTHONLIBS_VERSION_STRING}")
   set(PythonInterp_FIND_VERSION_EXACT ON)
 endif()
 include (FindPython3Interp)
-# Note: until we can produce multiple libboost_python in the
-# boost external, we must keep python3 proper.
-if (PYTHON3LIBS_FOUND AND PROPER)
+if (PYTHON3LIBS_FOUND)
   set( BUILD_PYTHON3 ON )
   message(STATUS "Python 3.x bindings will be built.")
 else()
@@ -644,7 +641,7 @@ else ()
 
   add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/drmaa/1.6)
   add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/qpid/0.8-RC3)
-  add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/boost/1.49.0)
+  add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/boost/1.54.0)
 
   add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/curl/7.31.0-p1 )
   add_subdirectory(${CONDOR_EXTERNAL_DIR}/bundles/openssl/0.9.8h-p2)
