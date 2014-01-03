@@ -2,6 +2,7 @@
 
 import os
 import re
+import sys
 import time
 import errno
 import types
@@ -51,16 +52,16 @@ class TestVersion(unittest.TestCase):
 def makedirs_ignore_exist(directory):
     try:
         os.makedirs(directory)
-    except oe:
-        if not isinstance(oe, OSError): raise
+    except OSError:
+        _, oe, _ = sys.exc_info()
         if oe.errno != errno.EEXIST:
             raise
 
 def remove_ignore_missing(file):
     try:
         os.unlink(file)
-    except oe:
-        if not isinstance(oe, OSError): raise
+    except OSError:
+        _, oe, _ = sys.exc_info()
         if oe.errno != errno.ENOENT:
             raise
 
@@ -145,7 +146,8 @@ class WithDaemons(unittest.TestCase):
             try:
                 try:
                     os.execvp("condor_master", ["condor_master", "-f"])
-                except e:
+                except:
+                    _, e, _ = sys.exc_info()
                     print(str(e))
             finally:
                 os._exit(1)

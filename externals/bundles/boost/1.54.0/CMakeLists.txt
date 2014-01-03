@@ -22,7 +22,7 @@ if (NOT WINDOWS)
     set(Boost_USE_MULTITHREADED ON)
 
     if (NOT PROPER)
-        set (BOOST_COMPONENTS thread)
+        set (BOOST_COMPONENTS thread system)
     else()
 
 	if (BUILD_TESTING)
@@ -97,7 +97,7 @@ if (NOT WINDOWS)
 	set(BOOST_FILENAME boost_1_54_0)
 	condor_pre_external( BOOST ${BOOST_FILENAME} "lib;${INCLUDE_LOC}" "done")
 
-	set(BOOST_MIN_BUILD_DEP --with-thread --with-test --with-python)
+	set(BOOST_MIN_BUILD_DEP --with-thread --with-system --with-test --with-python)
 	set(BOOST_PATCH echo "nothing")
 	set(BOOST_INSTALL echo "nothing")
 	unset(BOOST_INCLUDE)

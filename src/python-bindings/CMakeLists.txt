@@ -46,6 +46,8 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
     set_property( TARGET py3classad PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
   endif ()
 
+  get_property(INITIAL_PYTHON_INC_DIRS DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
+
   # Note we do not use condor_shared_lib below because we want a separate install target.
   add_library( classad_module SHARED classad_module.cpp classad_parsers.cpp )
   target_link_libraries( classad_module pyclassad -l${PYTHON2_BOOST_LIB} ${PYTHON2_LIBRARIES} )
@@ -59,7 +61,7 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
     target_link_libraries( classad_module3 py3classad -l${PYTHON3_BOOST_LIB} ${PYTHON3_LIBRARIES} )
     set_target_properties(classad_module3 PROPERTIES PREFIX "" OUTPUT_NAME classad3 )
     set_target_properties(classad_module3 PROPERTIES SUFFIX ".so" )
-    set_property( TARGET classad_module3 APPEND PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+    set_property( TARGET classad_module3 PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} ${INITIAL_PYTHON_INC_DIRS} )
     if ( NOT CMAKE_SKIP_RPATH )
       set_target_properties(classad_module3 PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
     endif()
@@ -78,7 +80,7 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
     target_link_libraries( htcondor3 py3classad condor_utils -l${PYTHON3_BOOST_LIB} ${PYTHON3_LIBRARIES} )
     set_target_properties( htcondor3 PROPERTIES PREFIX "" )
     set_target_properties( htcondor3 PROPERTIES SUFFIX ".so" )
-    set_property( TARGET htcondor3 APPEND PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+    set_property( TARGET htcondor3 PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} ${INITIAL_PYTHON_INC_DIRS} )
     if ( NOT CMAKE_SKIP_RPATH )
       set_target_properties(htcondor3 PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
     endif()
