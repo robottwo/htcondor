@@ -89,8 +89,8 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
   if ( BUILD_PYTHON3 )
     install ( TARGETS py3classad DESTINATION ${C_LIB} )
     install ( TARGETS htcondor3 classad_module3 DESTINATION ${C_PYTHON3ARCHLIB} )
-    install ( CODE "file(RENAME \"\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor3.so\" \"\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor.so\")")
-    install ( CODE "file(RENAME \"\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad3.so\" \"\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad.so\")")
+    install ( CODE "file(RENAME \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor3.so\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor.so\")")
+    install ( CODE "file(RENAME \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad3.so\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad.so\")")
   endif()
 
   if ( DARWIN )
