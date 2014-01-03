@@ -99,6 +99,13 @@ if (PYTHONLIBS_FOUND)
 else()
   message(STATUS "Python 2.x bindings will NOT be built.")
 endif()
+# Ubuntu 10's version of cmake (2.8.3) does not set PYTHON_VERSION_*
+# This if-block can be removed when support is dropped.
+if (NOT PYTHON_VERSION_MAJOR OR NOT PYTHON_VERSION_MINOR)
+  GET_FILENAME_COMPONENT(PYTHON2_LIBRARY_FILENAME ${PYTHON2_LIBRARIES} NAME)
+  STRING(REGEX REPLACE ".*python([0-9]+)[.]?([0-9]+).*" "\\1" PYTHON_VERSION_MAJOR ${PYTHON2_LIBRARY_FILENAME})
+  STRING(REGEX REPLACE ".*python([0-9]+)[.]?([0-9]+).*" "\\2" PYTHON_VERSION_MINOR ${PYTHON2_LIBRARY_FILENAME})
+endif()
 set(PYTHONLIBS_FOUND) # Unsets
 ##################################################
 # PYTHON3 discovery
