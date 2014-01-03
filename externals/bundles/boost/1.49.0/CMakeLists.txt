@@ -38,6 +38,10 @@ if (NOT WINDOWS)
     #  set (Boost_DEBUG TRUE)
     message (STATUS "Boost components: ${BOOST_COMPONENTS}" )
     find_package( Boost 1.33.1 COMPONENTS ${BOOST_COMPONENTS} )
+    if (Boost_PYTHON_LIBRARY)
+        set(Boost_PYTHON2_LIBRARY "${Boost_PYTHON_LIBRARY}")
+        set(Boost_PYTHON_LIBRARY)
+    endif()
 
     # always prefer system libraries where possible
     if(Boost_FOUND)
@@ -121,12 +125,12 @@ if (NOT PROPER) # AND (NOT Boost_FOUND OR SYSTEM_NOT_UP_TO_SNUFF) )
 	set(BOOST_INSTALL echo "nothing")
 	unset(BOOST_INCLUDE)
 
-	if (PYTHONINTERP_FOUND AND PYTHONLIBS_FOUND)
+	if (PYTHON2INTERP_FOUND AND PYTHON2LIBS_FOUND)
 		message(STATUS "Bootstrapping python for boost")
-		set(Boost_PYTHON_LIBRARY "external" PARENT_SCOPE)
-		set(BOOTSTRAP_PYTHON_OPTION "--with-python=${PYTHON_EXECUTABLE}")
+		set(Boost_PYTHON2_LIBRARY "external" PARENT_SCOPE)
+		set(BOOTSTRAP_PYTHON2_OPTION "--with-python=${PYTHON2_EXECUTABLE}")
 	else ()
-		set(BOOTSTRAP_PYTHON_OPTION )
+		set(BOOTSTRAP_PYTHON2_OPTION )
 	endif()
 
 	# so the idea of privately staging boost is silly.
@@ -137,7 +141,7 @@ if (NOT PROPER) # AND (NOT Boost_FOUND OR SYSTEM_NOT_UP_TO_SNUFF) )
 		#--Patch step ----------
 		 PATCH_COMMAND ${BOOST_PATCH}
 		#--Configure step ----------
-		 CONFIGURE_COMMAND ${BOOTSTRAP} --prefix=${BOOST_INSTALL_LOC} ${BOOTSTRAP_PYTHON_OPTION} ${CMD_TERM} echo "Configure complete"
+		 CONFIGURE_COMMAND ${BOOTSTRAP} --prefix=${BOOST_INSTALL_LOC} ${BOOTSTRAP_PYTHON2_OPTION} ${CMD_TERM} echo "Configure complete"
 		#--Build Step ----------
 		BUILD_COMMAND ${EXEC}bjam ${BOOST_MIN_BUILD_DEP} --prefix=${BOOST_INSTALL_LOC} --libdir=${BOOST_INSTALL_LOC}/lib define=BOOST_HAS_THREADS ${BUILD_OPTIONS} toolset=${TOOLSET} link=static install
 		BUILD_IN_SOURCE 1
@@ -163,9 +167,9 @@ if (BOOST_VER)
 	set( BOOST_INCLUDE ${BOOST_INCLUDE} PARENT_SCOPE )
 	set( BOOST_LD ${BOOST_LD} PARENT_SCOPE )
 	
-	if (Boost_PYTHON_LIBRARY)
-        set( Boost_PYTHON_LIBRARY ${Boost_PYTHON_LIBRARY} PARENT_SCOPE )
-        dprint("Found Python Library: ${Boost_PYTHON_LIBRARY} ")
+	if (Boost_PYTHON2_LIBRARY)
+        set( Boost_PYTHON2_LIBRARY ${Boost_PYTHON2_LIBRARY} PARENT_SCOPE )
+        dprint("Found Python 2.x library: ${Boost_PYTHON2_LIBRARY} ")
     endif()
 	
 else(BOOST_VER)

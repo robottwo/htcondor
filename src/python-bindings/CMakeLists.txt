@@ -1,56 +1,97 @@
 
-
-if ( WITH_PYTHON_BINDINGS AND PYTHONLIBS_FOUND AND Boost_PYTHON_LIBRARY AND NOT SOLARIS )
+if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NOT SOLARIS )
   configure_file (
 	"${PROJECT_SOURCE_DIR}/src/python-bindings/test_driver.in"
 	"${CMAKE_CURRENT_BINARY_DIR}/test_driver"
+  )
+  configure_file (
+        "${PROJECT_SOURCE_DIR}/src/python-bindings/test_driver3.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/test_driver3"
   )
 
   set ( CMAKE_LIBRARY_PATH_ORIG ${CMAKE_LIBRARY_PATH} )
   set ( CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH} /usr/lib64 )
   set ( CMAKE_LIBRARY_PATH CMAKE_LIBRARY_PATH_ORIG)
 
-  if (PROPER AND "${PYTHON_VERSION_MAJOR}" MATCHES "3")
-    set ( PYTHON_BOOST_LIB boost_python3 )
-  else()
-    set ( PYTHON_BOOST_LIB boost_python )
-  endif()
+  set ( PYTHON3_BOOST_LIB boost_python3 )
+  set ( PYTHON2_BOOST_LIB boost_python )
 
   include_directories(${PYTHON_INCLUDE_DIRS} ${BOOST_INCLUDE})
   link_directories(${BOOST_LD})
 
-  GET_FILENAME_COMPONENT(PYTHON_LIBRARY_FILENAME ${PYTHON_LIBRARIES} NAME)
-  STRING(REGEX REPLACE ".*python([0-9]+[.]?[0-9]+).*" "\\1" _PYTHON_VERSION ${PYTHON_LIBRARY_FILENAME})
+  GET_FILENAME_COMPONENT(PYTHON2_LIBRARY_FILENAME ${PYTHON2_LIBRARIES} NAME)
+  STRING(REGEX REPLACE ".*python([0-9]+[.]?[0-9]+).*" "\\1" _PYTHON2_VERSION ${PYTHON2_LIBRARY_FILENAME})
+  if ( BUILD_PYTHON3 )
+    GET_FILENAME_COMPONENT(PYTHON3_LIBRARY_FILENAME ${PYTHON3_LIBRARIES} NAME)
+    STRING(REGEX REPLACE ".*python([0-9]+[.]?[0-9]+).*" "\\1" _PYTHON3_VERSION ${PYTHON3_LIBRARY_FILENAME})
+  endif()
   if ( ${PACKAGE_VERSION} MATCHES "([0-9]+)[.]([0-9]+)[.]([0-9]+)" )
-    set( PYCLASSAD_LIB_NAME "pyclassad${_PYTHON_VERSION}_${CMAKE_MATCH_1}_${CMAKE_MATCH_2}_${CMAKE_MATCH_3}" )
+    set( PYCLASSAD_LIB_NAME "pyclassad${_PYTHON2_VERSION}_${CMAKE_MATCH_1}_${CMAKE_MATCH_2}_${CMAKE_MATCH_3}" )
+    if ( BUILD_PYTHON3 )
+      set( PY3CLASSAD_LIB_NAME "pyclassad${_PYTHON3_VERSION}_${CMAKE_MATCH_1}_${CMAKE_MATCH_2}_${CMAKE_MATCH_3}" )
+    endif()
   else()
     message(FATAL_ERROR "Can't determine HTCondor version!")
   endif()
+
   condor_shared_lib( pyclassad classad.cpp classad_wrapper.h exprtree_wrapper.h )
-  target_link_libraries( pyclassad ${CLASSADS_FOUND} ${PYTHON_LIBRARIES} -l${PYTHON_BOOST_LIB} )
+  target_link_libraries( pyclassad ${CLASSADS_FOUND} ${PYTHON2_LIBRARIES} -l${PYTHON2_BOOST_LIB} )
   set_target_properties( pyclassad PROPERTIES OUTPUT_NAME "${PYCLASSAD_LIB_NAME}" )
   set_target_properties( pyclassad PROPERTIES COMPILE_FLAGS "-fPIC")
+  if ( BUILD_PYTHON3 )
+    condor_shared_lib( py3classad classad.cpp classad_wrapper.h exprtree_wrapper.h )
+    target_link_libraries( py3classad ${CLASSADS_FOUND} ${PYTHON3_LIBRARIES} -l${PYTHON3_BOOST_LIB} )
+    set_target_properties( py3classad PROPERTIES OUTPUT_NAME "${PY3CLASSAD_LIB_NAME}" )
+    set_target_properties( py3classad PROPERTIES COMPILE_FLAGS "-fPIC")
+    set_property( TARGET py3classad PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+  endif ()
 
   # Note we do not use condor_shared_lib below because we want a separate install target.
   add_library( classad_module SHARED classad_module.cpp classad_parsers.cpp )
-  target_link_libraries( classad_module pyclassad -l${PYTHON_BOOST_LIB} ${PYTHON_LIBRARIES} )
+  target_link_libraries( classad_module pyclassad -l${PYTHON2_BOOST_LIB} ${PYTHON2_LIBRARIES} )
   set_target_properties(classad_module PROPERTIES PREFIX "" OUTPUT_NAME classad )
   set_target_properties(classad_module PROPERTIES SUFFIX ".so" )
   if ( NOT CMAKE_SKIP_RPATH )
     set_target_properties(classad_module PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
   endif()
+  if ( BUILD_PYTHON3 )
+    add_library( classad_module3 SHARED classad_module.cpp classad_parsers.cpp )
+    target_link_libraries( classad_module3 py3classad -l${PYTHON3_BOOST_LIB} ${PYTHON3_LIBRARIES} )
+    set_target_properties(classad_module3 PROPERTIES PREFIX "" OUTPUT_NAME classad3 )
+    set_target_properties(classad_module3 PROPERTIES SUFFIX ".so" )
+    set_property( TARGET classad_module3 APPEND PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+    if ( NOT CMAKE_SKIP_RPATH )
+      set_target_properties(classad_module3 PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
+    endif()
+  endif()
 
-  set_source_files_properties(config.cpp collector.cpp negotiator.cpp secman.cpp dc_tool.cpp schedd.cpp classad.cpp classad_module.cpp classad_parsers.cpp event.cpp PROPERTIES COMPILE_FLAGS "-Wno-strict-aliasing -Wno-cast-qual -Wno-deprecated -Wno-write-strings")
+  set_source_files_properties(collector.cpp negotiator.cpp secman.cpp config.cpp dc_tool.cpp schedd.cpp classad.cpp classad_module.cpp classad_parsers.cpp event.cpp PROPERTIES COMPILE_FLAGS "-Wno-strict-aliasing -Wno-cast-qual -Wno-deprecated -Wno-write-strings")
   add_library( htcondor SHARED htcondor.cpp collector.cpp negotiator.cpp config.cpp daemon_and_ad_types.cpp dc_tool.cpp export_headers.h old_boost.h schedd.cpp secman.cpp event.cpp )
-  target_link_libraries( htcondor pyclassad condor_utils -l${PYTHON_BOOST_LIB} ${PYTHON_LIBRARIES} )
+  target_link_libraries( htcondor pyclassad condor_utils -l${PYTHON2_BOOST_LIB} ${PYTHON2_LIBRARIES} )
   set_target_properties( htcondor PROPERTIES PREFIX "" )
   set_target_properties( htcondor PROPERTIES SUFFIX ".so" )
   if ( NOT CMAKE_SKIP_RPATH )
     set_target_properties(htcondor PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
   endif()
+  if ( BUILD_PYTHON3 )
+    add_library( htcondor3 SHARED htcondor.cpp collector.cpp negotiator.cpp config.cpp daemon_and_ad_types.cpp dc_tool.cpp export_headers.h old_boost.h schedd.cpp secman.cpp event.cpp )
+    target_link_libraries( htcondor3 py3classad condor_utils -l${PYTHON3_BOOST_LIB} ${PYTHON3_LIBRARIES} )
+    set_target_properties( htcondor3 PROPERTIES PREFIX "" )
+    set_target_properties( htcondor3 PROPERTIES SUFFIX ".so" )
+    set_property( TARGET htcondor3 APPEND PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+    if ( NOT CMAKE_SKIP_RPATH )
+      set_target_properties(htcondor3 PROPERTIES INSTALL_RPATH "${PYTHON_RPATH}")
+    endif()
+  endif()
 
   install ( TARGETS pyclassad DESTINATION ${C_LIB} )
   install ( TARGETS htcondor classad_module DESTINATION ${C_PYTHONARCHLIB} )
+  if ( BUILD_PYTHON3 )
+    install ( TARGETS py3classad DESTINATION ${C_LIB} )
+    install ( TARGETS htcondor3 classad_module3 DESTINATION ${C_PYTHON3ARCHLIB} )
+    install ( CODE "file(RENAME \"${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor3.so\" \"${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/htcondor.so\")")
+    install ( CODE "file(RENAME \"${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad3.so\" \"${CMAKE_INSTALL_PREFIX}/${C_PYTHON3ARCHLIB}/classad.so\")")
+  endif()
 
   if ( DARWIN )
         add_custom_command( TARGET classad_module htcondor
@@ -59,6 +100,14 @@ if ( WITH_PYTHON_BINDINGS AND PYTHONLIBS_FOUND AND Boost_PYTHON_LIBRARY AND NOT 
         add_custom_command( TARGET pyclassad
                 POST_BUILD
                 COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs lib${PYCLASSAD_LIB_NAME}.dylib )
+        if ( BUILD_PYTHON3 )
+          add_custom_command( TARGET classad_module3 htcondor3
+                POST_BUILD
+                COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs classad3.so htcondor3.so )
+          add_custom_command( TARGET py3classad
+                POST_BUILD
+                COMMAND ${CMAKE_SOURCE_DIR}/src/condor_scripts/macosx_rewrite_libs lib${PYCLASSAD_LIB_NAME}.dylib )
+        endif()
   endif()
 
   string( COMPARE EQUAL ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} INSOURCEBUILD)
@@ -76,12 +125,16 @@ if ( WITH_PYTHON_BINDINGS AND PYTHONLIBS_FOUND AND Boost_PYTHON_LIBRARY AND NOT 
       add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/delayed_update.py DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/delayed_update.py COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/delayed_update.py ${CMAKE_CURRENT_BINARY_DIR}/tests/delayed_update.py )
       add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/test_log.txt DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_log.txt COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_log.txt ${CMAKE_CURRENT_BINARY_DIR}/tests/test_log.txt )
     endif()
-    add_custom_target ( python_bindings_tests ALL DEPENDS tests/classad_tests.py tests/htcondor_tests.py tests/delayed_update_tests.py tests/test.ad tests/test_multiple.ad tests/test.old.ad tests/test_multiple.old.ad tests/submit.ad tests/delayed_submit.ad tests/delayed_update.py tests/test_log.txt ${CMAKE_CURRENT_BINARY_DIR}/test_driver )
+    add_custom_target ( python_bindings_tests ALL DEPENDS tests/classad_tests.py tests/htcondor_tests.py tests/delayed_update_tests.py tests/test.ad tests/test_multiple.ad tests/test.old.ad tests/test_multiple.old.ad tests/submit.ad tests/delayed_submit.ad tests/delayed_update.py tests/test_log.txt ${CMAKE_CURRENT_BINARY_DIR}/test_driver ${CMAKE_CURRENT_BINARY_DIR}/test_driver3 )
     enable_testing()
     if ( LINUX )
       add_test(python_classad_test test_driver tests/classad_tests.py)
       # add_test(python_htcondor_test test_driver tests/htcondor_tests.py TestConfig TestVersion)
       add_test(python_htcondor_test test_driver tests/htcondor_tests.py TestVersion)
+      if (BUILD_PYTHON3)
+        add_test(python_classad_test test_driver3 tests/classad_tests.py)
+        add_test(python_htcondor_test test_driver3 tests/htcondor_tests.py TestVersion)
+      endif()
     endif ( LINUX )
   endif (BUILD_TESTING)
-endif ( WITH_PYTHON_BINDINGS AND PYTHONLIBS_FOUND AND Boost_PYTHON_LIBRARY AND NOT SOLARIS )
+endif ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NOT SOLARIS )

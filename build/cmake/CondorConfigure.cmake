@@ -72,7 +72,11 @@ message(STATUS "********* BEGINNING CONFIGURATION *********")
 ##################################################
 ##################################################
 
+##################################################
+# PYTHON2 discovery
+##################################################
 # disable python on windows until we can get the rest of cmake changes worked out.
+set( PythonLibs_FIND_VERSION "2" )
 if(NOT WINDOWS)
 #if(NOT WINDOWS AND NOT CONDOR_PLATFORM MATCHES "Fedora19")
 include (FindPythonLibs)
@@ -85,6 +89,39 @@ if (DEFINED PYTHONLIBS_VERSION_STRING)
   set(PythonInterp_FIND_VERSION_EXACT ON)
 endif()
 include (FindPythonInterp)
+if (PYTHONLIBS_FOUND)
+  set( PYTHON2_EXECUTABLE "${PYTHON_EXECUTABLE}" )
+  set( PYTHON2LIBS_FOUND "${PYTHONLIBS_FOUND}" )
+  set( PYTHON2_LIBRARIES "${PYTHON_LIBRARIES}" )
+  set( PYTHON2_INCLUDE_DIRS "${PYTHON_INCLUDE_DIRS}" )
+  set( PYTHON2INTERP_FOUND "${PYTHONINTERP_FOUND}" )
+  message(STATUS "Python 2.x bindings will be built.")
+else()
+  message(STATUS "Python 2.x bindings will NOT be built.")
+endif()
+set(PYTHONLIBS_FOUND) # Unsets
+##################################################
+# PYTHON3 discovery
+##################################################
+set( PythonLibs_FIND_VERSION "3" )
+if(NOT WINDOWS)
+  include (FindPython3Libs)
+endif(NOT WINDOWS)
+if (DEFINED PYTHONLIBS_VERSION_STRING)
+  set(PythonInterp_FIND_VERSION "${PYTHONLIBS_VERSION_STRING}")
+  set(PythonInterp_FIND_VERSION_EXACT ON)
+endif()
+include (FindPython3Interp)
+# Note: until we can produce multiple libboost_python in the
+# boost external, we must keep python3 proper.
+if (PYTHON3LIBS_FOUND AND PROPER)
+  set( BUILD_PYTHON3 ON )
+  message(STATUS "Python 3.x bindings will be built.")
+else()
+  message(STATUS "Python 3.x bindings will NOT be built.")
+endif()
+##################################################
+
 include (FindThreads)
 include (GlibcDetect)
 

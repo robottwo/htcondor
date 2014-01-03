@@ -117,6 +117,7 @@ set( C_LIBEXEC		libexec )
 set( C_SBIN			sbin)
 
 set( C_PYTHONARCHLIB lib/python)
+set( C_PYTHON3ARCHLIB lib/python3)
 
 set( C_INCLUDE		include)
 set( C_INCLUDE_PUBLIC		include)
@@ -266,6 +267,9 @@ elseif ( ${OS_NAME} MATCHES "WIN" )
 elseif( ${OS_NAME} STREQUAL "LINUX" AND CONDOR_PACKAGE_BUILD )
 
 	execute_process( COMMAND python -c "import distutils.sysconfig; import sys; sys.stdout.write(distutils.sysconfig.get_python_lib(1)[1:])" OUTPUT_VARIABLE C_PYTHONARCHLIB)
+        if ( BUILD_PYTHON3 )
+	  execute_process( COMMAND python3 -c "import distutils.sysconfig; import sys; sys.stdout.write(distutils.sysconfig.get_python_lib(1)[1:])" OUTPUT_VARIABLE C_PYTHON3ARCHLIB)
+        endif ()
 
 	# it's a smaller subset easier to differentiate.
 	# check the operating system name
