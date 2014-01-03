@@ -214,10 +214,10 @@ if ( NOT PROPER )
 
 		if(BOOST_INSTALL_LOC)
 			set ( BOOST_PREFIX --with-boost-prefix=${BOOST_INSTALL_LOC})
-			set (BOOST_LIB ${BOOST_INSTALL_LOC}/lib/libboost_thread.a)
+			set ( BOOST_LIB ${BOOST_INSTALL_LOC}/lib/libboost_thread.a;${BOOST_INSTALL_LOC}/lib/libboost_system.a )
 		else()
 			set ( BOOST_PREFIX --with-boost-prefix=/usr)
-			set (BOOST_LIB libboost_thread.a)
+			set ( BOOST_LIB libboost_thread.a;libboost_system.a )
 		endif()
 
 		ExternalProject_Add(cream
