@@ -43,7 +43,7 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
     target_link_libraries( py3classad ${CLASSADS_FOUND} ${PYTHON3_LIBRARIES} -l${PYTHON3_BOOST_LIB} )
     set_target_properties( py3classad PROPERTIES OUTPUT_NAME "${PY3CLASSAD_LIB_NAME}" )
     set_target_properties( py3classad PROPERTIES COMPILE_FLAGS "-fPIC")
-    set_property( TARGET py3classad PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} )
+    set_property( TARGET py3classad PROPERTY INCLUDE_DIRECTORIES ${PYTHON3_INCLUDE_DIRS} ${BOOST_INCLUDE} ${INITIAL_PYTHON_INC_DIRS} )
   endif ()
 
   get_property(INITIAL_PYTHON_INC_DIRS DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
@@ -67,7 +67,16 @@ if ( WITH_PYTHON_BINDINGS AND PYTHON2LIBS_FOUND AND Boost_PYTHON2_LIBRARY AND NO
     endif()
   endif()
 
-  set_source_files_properties(htcondor.cpp collector.cpp negotiator.cpp secman.cpp config.cpp daemon_and_ad_types.cpp dc_tool.cpp schedd.cpp classad.cpp classad_module.cpp classad_parsers.cpp event.cpp PROPERTIES COMPILE_FLAGS "-Wno-strict-aliasing -Wno-cast-qual -Wno-deprecated -Wno-write-strings -Wno-unused-local-typedefs")
+  list ( APPEND HTCONDOR_SOURCE_FILES htcondor.cpp collector.cpp negotiator.cpp secman.cpp config.cpp daemon_and_ad_types.cpp dc_tool.cpp schedd.cpp classad.cpp classad_module.cpp classad_parsers.cpp event.cpp )
+  set ( HTCONDOR_FLAGS "-Wno-strict-aliasing -Wno-cast-qual -Wno-deprecated -Wno-write-strings" )
+  if ( HAVE_NO_UNUSED_LOCAL_TYPEDEFS )
+    set_source_files_properties( HTCONDOR_FLAGS "${HTCONDOR_FLAGS} -Wno-unused-local-typedefs" )
+  endif()
+  foreach ( f ${HTCONDOR_SOURCE_FILES} )
+    message(STATUS "File ${f}" )
+    set_source_files_properties ( ${f} PROPERTIES COMPILE_FLAGS ${HTCONDOR_FLAGS} )
+  endforeach ()
+
   add_library( htcondor SHARED htcondor.cpp collector.cpp negotiator.cpp secman.cpp config.cpp daemon_and_ad_types.cpp dc_tool.cpp export_headers.h old_boost.h schedd.cpp secman.cpp event.cpp )
   target_link_libraries( htcondor pyclassad condor_utils -l${PYTHON2_BOOST_LIB} ${PYTHON2_LIBRARIES} )
   set_target_properties( htcondor PROPERTIES PREFIX "" )

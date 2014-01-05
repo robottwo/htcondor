@@ -118,7 +118,8 @@ if (DEFINED PYTHON3LIBS_VERSION_STRING)
   set(PythonInterp_FIND_VERSION_EXACT ON)
 endif()
 include (FindPython3Interp)
-if (PYTHON3LIBS_FOUND)
+# The python3 bindings CMakeLists.txt use some newer cmake features.
+if (PYTHON3LIBS_FOUND AND "${CMAKE_VERSION}" VERSION_GREATER 2.8.7)
   set( BUILD_PYTHON3 ON )
   message(STATUS "Python 3.x bindings will be built.")
 else()
@@ -329,6 +330,8 @@ if( NOT WINDOWS)
 	endif()
 
 	dprint ("TJ && TSTCLAIR We need this check in MSVC") 
+
+    check_cxx_compiler_flag(-Wno-unused-local-typedefs HAVE_NO_UNUSED_LOCAL_TYPEDEFS)
 
 	check_cxx_compiler_flag(-std=c++11 cxx_11)
 	if (cxx_11)
