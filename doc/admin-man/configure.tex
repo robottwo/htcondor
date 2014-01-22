@@ -371,14 +371,27 @@ and
   HOSTALLOW_ADMINISTRATOR = $(ADMIN_MACHINES)
 \end{verbatim}
 
-Note that a line continuation character may currently be used within
-a comment, so the following example does \emph{not} set the
-configuration variable \MacroNI{FOO}:
+Where a line continuation character directly precedes a comment,
+the entire comment line is ignored,
+and the following line is used in the continuation. 
+Line continuation characters within comments are ignored.
+
+Both this example
 \begin{verbatim}
-  # This comment includes the following line, so FOO is NOT set \
-  FOO = BAR
+  A = $(B) \
+  # $(C)
+  $(D)
 \end{verbatim}
-It is a poor idea to use this functionality.
+and this example
+\begin{verbatim}
+  A = $(B) \
+  # $(C) \
+  $(D)
+\end{verbatim}
+result in the same value for \verb@A@:
+\begin{verbatim}
+  A = $(B) $(D)
+\end{verbatim}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsubsection{\label{sec:Program-Defined-Macros}Executing a Program to Produce Configuration Macros}
@@ -1518,6 +1531,17 @@ File System Configuration File Entries''.
   Collection names currently implemented are \Expr{DC} or \Expr{DAEMONCORE}
   and \Expr{SCHEDD} or \Expr{SCHEDULER}.
 
+\label{param:TcpKeepaliveInterval}
+\item[\Macro{TCP\_KEEPALIVE\_INTERVAL}]
+  The keepalive interval (in seconds) to use for any HTCondor TCP connection.
+  The default keepalive interval is 360 (6 minutes); this value was chosen
+  to minimize the likelihood that keepalive packets are sent while still
+  detecting dead TCP connections before job leases expire.  A smaller value
+  will consume more OS and network resources; a larger value may cause jobs
+  to fail unnecessarily due to network disconnects.  Most users will not need
+  to tune this configuration.  Setting this to 0 will use the OS default;
+  setting this to -1 will disable HTCondor's use of TCP keepalive.
+
 \end{description}
 
 
@@ -2200,6 +2224,27 @@ which use DaemonCore).
   The macro is named by substituting \MacroNI{<SUBSYS>}
   with the appropriate subsystem string as defined in
   section~\ref{sec:HTCondor-Subsystem-Names}.
+
+\label{param:SubsysSuperAddressFile}
+\item[\MacroB{<SUBSYS>\_SUPER\_ADDRESS\_FILE}]
+  \index{SUBSYS\_SUPER\_ADDRESS\_FILE macro@\texttt{<SUBSYS>\_SUPER\_ADDRESS\_FILE} macro}
+  \index{SCHEDD\_SUPER\_ADDRESS\_FILE macro@\texttt{SCHEDD\_SUPER\_ADDRESS\_FILE} macro}
+  \index{configuration macro!\texttt{SCHEDD\_SUPER\_ADDRESS\_FILE}}
+  \index{COLLECTOR\_SUPER\_ADDRESS\_FILE macro@\texttt{COLLECTOR\_SUPER\_ADDRESS\_FILE} macro}
+  \index{configuration macro!\texttt{COLLECTOR\_SUPER\_ADDRESS\_FILE}}
+  A complete path to a file that is to contain an IP address and port number 
+  for a command port that is serviced with priority for a daemon. 
+  Every HTCondor daemon that uses
+  DaemonCore may have a higher priority command port where commands are sent.
+  Any command that goes through \Condor{sos}, and any command issued by
+  the super user (root or local system) for a daemon on the local machine
+  will have the command sent to this port.
+  Default values are provided for the \Condor{schedd} daemon at
+  \File{\$(SPOOL)/.schedd\_address.super}
+  and the \Condor{collector} daemon at
+  \File{\$(LOG)/.collector\_address.super}.
+  When not defined for other DaemonCore daemons,
+  there will be no higher priority command port.
   
 \label{param:SubsysDaemonAdFile}
 \item[\MacroB{<SUBSYS>\_DAEMON\_AD\_FILE}]
@@ -2371,6 +2416,12 @@ which use DaemonCore).
   tuning parameter that places a limit on the number of child process exits to
   process per DaemonCore event cycle.  A value of zero or less means no limit.
 
+\label{param:CoreFileName}
+\item[\Macro{CORE\_FILE\_NAME}]
+  Defines the name of the core file created.
+  Defaults to \Expr{core.\$(SUBSYSTEM)} on Unix platforms,
+  and \Expr{core.\$(SUBSYSTEM).WIN32} on Windows platforms.   
+
 \end{description}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2416,11 +2467,13 @@ section~\ref{sec:Networking} on page~\pageref{sec:Networking}.
 \item[\Macro{CCB\_HEARTBEAT\_INTERVAL}] This is the maximum
   number of seconds of silence on a daemon's connection to the CCB server
   after which it will ping the server to verify that the connection still
-  works.  The default is 20 minutes.  This feature serves to both speed
+  works.  The default is 5 minutes.  This feature serves to both speed
   up detection of dead connections and to generate a guaranteed minimum
   frequency of activity to attempt to prevent the connection from being
   dropped.  The special value 0 disables the heartbeat.  The heartbeat
-  is automatically disabled if the CCB server is older than 7.5.0.
+  is automatically disabled if the CCB server is older than 7.5.0.  Having
+  the heartbeat interval greater than the JobLeaseDuration may cause
+  unnecessary job disconnects in pools with network issues.
 
 \label{param:UseSharedPort}
 \item[\Macro{USE\_SHARED\_PORT}] A boolean value that
@@ -6082,6 +6135,14 @@ SYSTEM_PERIODIC_REMOVE = \
   be scheduled to run until all earlier jobs have finished spooling in
   their input files and have been scheduled.
 
+\label{param:DedicatedSchedulerDelayFactor}
+\item[\Macro{DEDICATED\_SCHEDULER\_DELAY\_FACTOR}]
+  Limits the cpu usage of the dedicated scheduler within the \Condor{schedd}.
+  The default value of 5 is the ratio of time spent not in 
+  the dedicated scheduler to the time scheduling parallel jobs.
+  Therefore, the default caps the time spent in the dedicated scheduler
+  to 20\%.
+
 \label{param:ScheddSendVacateViaTcp}
 \item[\Macro{SCHEDD\_SEND\_VACATE\_VIA\_TCP}]
   A boolean value that defaults to \Expr{False}.
@@ -6232,6 +6293,38 @@ SYSTEM_PERIODIC_REMOVE = \
   are to be added to the list of attributes for determining
   the sets of jobs considered as a unit (an auto cluster) in negotiation,
   when auto clustering is enabled.
+
+\label{param:ScheddAuditLog}
+\item[\Macro{SCHEDD\_AUDIT\_LOG}]
+  The path and file name of the \Condor{schedd} log that records
+  user-initiated commands that modify the job queue.
+  If not defined, there will be no \Condor{schedd} audit log.
+
+\label{param:MaxScheddAuditLog}
+\item[\Macro{MAX\_SCHEDD\_AUDIT\_LOG}]
+  Controls the maximum amount of time that a log will be allowed to grow. 
+  When it is time to rotate a log file, 
+  it will be saved to a file with an ISO timestamp suffix. 
+  The oldest rotated file receives the file name suffix \Expr{.old}. 
+  The \Expr{.old} files are overwritten each time the maximum number of 
+  rotated files 
+  (determined by the value of \MacroNI{MAX\_NUM\_SCHEDD\_AUDIT\_LOG})
+  is exceeded. 
+  A value of 0 specifies that the file may grow without bounds.
+  The following suffixes may be used to qualify the integer: 
+\begin{description}
+  \item{\Expr{Sec} for seconds}
+  \item{\Expr{Min} for minutes}
+  \item{\Expr{Hr} for hours}
+  \item{\Expr{Day} for days}
+  \item{\Expr{Wk} for weeks}
+\end{description}
+
+\label{param:MaxNumScheddAuditLog}
+\item[\Macro{MAX\_NUM\_SCHEDD\_AUDIT\_LOG}]
+  The integer that controls the maximum number of rotations that
+  the \Condor{schedd} audit log is allowed to perform,
+  before the oldest one will be rotated away. The default value is 1. 
 
 \end{description}
 
@@ -6730,10 +6823,12 @@ REM Run the actual job now
 \label{param:JobExecdirPermissions}
 \item[\Macro{JOB\_EXECDIR\_PERMISSIONS}]
   Control the permissions on the job's scratch directory. Defaults to
-  \Expr{user} which means permissions of \emph{0700}. Possible values are
-  \Expr{user}, \Expr{group}, and \Expr{world}. If set to \Expr{group} then the
-  directory is group-accessible, permissions of \emph{0750}; likewise if set
-  to \Expr{world} the directory is created with permissions \emph{0755}.
+  \Expr{user} which sets permissions to \emph{0700}. Possible values are
+  \Expr{user}, \Expr{group}, and \Expr{world}. 
+  If set to \Expr{group}, then the directory is group-accessible, 
+  with permissions set to \emph{0750}.
+  If set to \Expr{world},
+  then the directory is created with permissions set to \emph{0755}.
 
 
 \end{description}
@@ -8401,6 +8496,13 @@ These macros affect the \Condor{gridmanager}.
   universe job fails to ping the gatekeeper, the job will be put on hold.
   Defaults to 5 days (in seconds).
 
+\label{param:EC2ResourceTimeout}
+\item[\Macro{EC2\_RESOURCE\_TIMEOUT}]
+  The number of seconds after which if an EC2 grid universe job fails to
+  ping the EC2 service, the job will be put on hold.  Defaults to -1,
+  which implements an infinite length, 
+  such that a failure to ping the service will never put the job on hold.
+
 \label{param:GramVersionDetection}
 \item[\Macro{GRAM\_VERSION\_DETECTION}]
   A boolean value that defaults to \Expr{True}.
@@ -9426,43 +9528,47 @@ in section~\ref{sec:DAG-configuration}.
 \item[\Macro{DAGMAN\_DEFAULT\_NODE\_LOG}]
   The default name of a file to be used as a job event log by all node jobs
   of a DAG.
-  Note that even if \MacroNI{DAGMAN\_ALWAYS\_USE\_NODE\_LOG} is set to
+  Even if \MacroNI{DAGMAN\_ALWAYS\_USE\_NODE\_LOG} is set to
   \Expr{False}, the default log file will be used by any node jobs for which
   a log file is not defined in the job's submit description file.
 
-  As of version 8.1.3, three special macros are available for use in
-  the \MacroNI{DAGMAN\_DEFAULT\_NODE\_LOG} specification (
-  \Bold{note the "@" instead of "\$"}):
+  The file name needs to be unique for each DAG,
+  yet the standard job ClassAd attributes will not be available 
+  with the \Condor{dagman} job run under the scheduler universe. 
+  Therefore, as of version HTCondor version 8.1.3, 
+  a special macro syntax 
+  uses \Bold{\Expr{@}} instead of \Bold{\Expr{\$}} to indicate
+  a special evaluation for acquiring values.
   \begin{itemize}
-  \item \Expr{@(DAG\_DIR)}: The directory in which the primary DAG file
+  \item \Expr{@(DAG\_DIR)}: The directory in which the primary DAG input file
   resides.
-  \item \Expr{@(DAG\_FILE)}: The name of the primary DAG file (not
-  including any directory information).
-  \item \Expr{@(CLUSTER)}: The cluster of this DAGMan process.
+  If more than one DAG input file is specified to \Condor{submit\_dag},
+  the primary DAG input file is the leftmost one on the command line.
+  \item \Expr{@(DAG\_FILE)}: The name of the primary DAG input file.
+  It does not include the path.
+  \item \Expr{@(CLUSTER)}: The \Attr{ClusterId} attribute of 
+  the \Condor{dagman} job.
   \end{itemize}
-  Note that if more than one DAG file is specified to \Condor{submit\_dag},
-  the primary DAG file is whichever one comes first on the command line.
 
-  If not defined, \MacroNI{DAGMAN\_DEFAULT\_NODE\_LOG} defaults
-  to \Expr{@(DAG\_DIR)/@(DAG\_FILE).nodes.log}.
+  If not defined, 
+  \Expr{@(DAG\_DIR)/@(DAG\_FILE).nodes.log} is the default value.
 
-  A few more notes:
+  Notes:
   \begin{itemize}
-  \item The expression \Expr{\$(LOG)} will not have the expected effect
-  if used in the \MacroNI{DAGMAN\_DEFAULT\_NODE\_LOG} specification,
-  because for \Condor{dagman} \Expr{\$(LOG)} is defined as \File{"."}.
-  So if you want to put your default log file into the log directory
-  you need to use something like \Expr{\$(LOCAL\_DIR)/log} instead of
-  \Expr{\$(LOG)}.
-  \item If you put your default log file into the spool directory,
-  you will have to modify \MacroNI{VALID\_SPOOL\_FILES}
-  (see ~\ref{param:ValidSpoolFiles}) to prevent \Condor{preen} from
-  removing the default log file.  If the default log file is removed
-  during a run, severe problems will ensue...
-  \item The \Macro{DAGMAN\_DEFAULT\_NODE\_LOG} specification must
-  ensure that the default node log files are named uniquely for each DAG.
-  Therefore, the \Macro{DAGMAN\_DEFAULT\_NODE\_LOG} value should
-  always include \File{@(DAG\_FILE)}.  For example,
+  \item Using \Expr{\$(LOG)} in defining a value for 
+  \MacroNI{DAGMAN\_DEFAULT\_NODE\_LOG} will not have the expected effect,
+  because \Expr{\$(LOG)} is defined as \Expr{"."} for \Condor{dagman}.
+  To place the default log file into the log directory,
+  write the expression relative to a known directory,
+  as the example \Expr{\$(LOCAL\_DIR)/log}.
+  \item A default log file placed in the spool directory
+  will need extra configuration to prevent \Condor{preen} from removing it;
+  modify \MacroNI{VALID\_SPOOL\_FILES}.
+  Removal of the default log file during a run will cause severe problems.
+  \item The value defined for \MacroNI{DAGMAN\_DEFAULT\_NODE\_LOG} must
+  ensure that the file is unique for each DAG.
+  Therefore, the value should always include \Expr{@(DAG\_FILE)}.
+  For example,
   \begin{verbatim}
   DAGMAN_DEFAULT_NODE_LOG = $(LOCAL_DIR)/log/@(DAG_FILE).nodes.log
   \end{verbatim}
@@ -9470,7 +9576,7 @@ in section~\ref{sec:DAG-configuration}.
   \begin{verbatim}
   DAGMAN_DEFAULT_NODE_LOG = $(LOCAL_DIR)/log/dag.nodes.log
   \end{verbatim}
-  will cause a failure if more than one DAG is run at a time on a
+  will cause failure when more than one DAG is run at the same time on a
   given submit machine.
   \end{itemize}
 
@@ -9588,6 +9694,11 @@ in section~\ref{sec:DAG-configuration}.
   This variable must be \Expr{False} if \Condor{dagman} from Condor
   version 7.9.0 or later is submitting jobs to a \Condor{schedd} daemon
   or using a \Condor{submit} executable that is older than Condor version 7.9.0.
+  \Bold{Note:  As of version 8.1.4, it is no longer recommended to set this
+  macro to \Expr{False}, and doing so will produce a warning.  This
+  option will probably be disabled entirely in a future version.  To
+  run a DAG with \Macro{DAGMAN\_ALWAYS\_USE\_NODE\_LOG} set to \Expr{False},
+  you will also have to set \Macro{DAGMAN\_USE\_STRICT} to 0.}
 
 \label{param:DAGmanSuppressNotification}
 \item[\Macro{DAGMAN\_SUPPRESS\_NOTIFICATION}]
@@ -10923,7 +11034,7 @@ Configuration File Macros Affecting APIs}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{\label{sec:Config-ssh-to-job}Configuration File Entries
-Relating to \Condor{ssh\_to\_job}}
+Relating to \condor{ssh\_to\_job}}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \index{configuration!condor\_ssh\_to\_job configuration variables}
@@ -11054,7 +11165,7 @@ section~\ref{man-condor-ssh-to-job}.
 \end{description}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{\label{sec:Config-rooster}\Condor{rooster} Configuration File Macros}
+\subsection{\label{sec:Config-rooster}\condor{rooster} Configuration File Macros}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \index{configuration!condor\_rooster configuration variables}
@@ -11120,7 +11231,7 @@ for details on how to do this.
 \end{description}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{\label{sec:Config-shared-port}\Condor{shared\_port} Configuration File Macros}
+\subsection{\label{sec:Config-shared-port}\condor{shared\_port} Configuration File Macros}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \index{configuration!condor\_shared\_port configuration variables}
 These configuration variables affect the \Condor{shared\_port} daemon.
@@ -11714,7 +11825,7 @@ These macros are utilized only on Windows platforms.
 \end{description}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{\label{sec:Config-defrag}\Condor{defrag} Configuration File Macros}
+\subsection{\label{sec:Config-defrag}\condor{defrag} Configuration File Macros}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \index{configuration!condor\_defrag configuration variables}
 These configuration variables affect the \Condor{defrag} daemon.  A general
@@ -11970,139 +12081,5 @@ are published to the \Condor{collector}.
   of each ClassAd define the properties of a metric.  The value of each
   attribute may be a ClassAd expression that references properties of
   the daemon ClassAd that is being monitored.
-
-  An example of a metric definition:
-
-\begin{verbatim}
-[
-  Name   = "JobsSubmitted";
-  Desc   = "Number of jobs submitted";
-  Units  = "jobs";
-  TargetType = "Scheduler";
-]
-\end{verbatim}
-
-  This file containing the default metrics is a good source of
-  additional examples: 
-  \File{\$(GANGLIAD\_METRICS\_CONFIG\_DIR)/00\_default\_metrics}.
-
-  The recognized metric attributes are the following:
-
-  \begin{description}
-
-  \item[Name] The name of this metric.  Metrics published for the same
-    machine must have unique names.
-
-  \item[Value] A ClassAd expression that produces the value of this
-    metric.  The default value is the value in the daemon ClassAd of the
-    attribute with the same name as this metric.
-
-  \item[Desc] A description of the metric.  This is displayed when the
-    user holds the mouse over the metric's graph.
-
-  \item[Verbosity] The integer verbosity level of this metric.  Metrics
-    with a higher verbosity level than \Macro{GANGLIA\_VERBOSITY} will
-    not be published.
-
-  \item[TargetType] A string containing a comma-separated list of daemon
-    ClassAd types this metric monitors.  The specified values should
-    match \Attr{MyType} of the daemon ClassAd.  In addition, there are
-    special values that may be included. \verb|"Machine_slot1"| may be
-    specified to monitor the machine ClassAd for slot 1 only.  This is
-    useful when monitoring machine-wide attributes.  The special
-    value \verb|"ANY"| matches any type of ClassAd.
-
-  \item[Requirements] If specified, this may be used to restrict which
-    daemon ClassAds are monitored by this metric.  By default, all daemon
-    ClassAds of the specified type are monitored.
-
-  \item[Title] The graph title for this metric.  The default is the
-    metric name.
-
-  \item[Group] A string specifying the name of this metric's group.
-    Metrics are arranged by group in the Ganglia web page.  The
-    default is determined by the daemon type.  Metrics in different
-    groups must still have unique names.
-
-  \item[Cluster] A string specifying the cluster name for this metric.
-    The default cluster name is taken from the configuration variable
-    \Macro{GANGLIAD\_DEFAULT\_CLUSTER}.
-
-  \item[Units] A string describing the units of this metric.
-
-  \item[Derivative] A boolean value that specifies if Ganglia should
-    graph the derivative of this metric.  Ganglia versions prior to
-    3.4 do not support this.
-
-  \item[Type] A string specifying the type of the metric.  Possible
-    values are \verb|"double"|, \verb|"boolean"|, and \verb|"string"|.
-    The default is \verb|"double"|.
-
-  \item[Regex] This string value specifies a regular expression that
-    matches attributes to be monitored by this metric.  This is useful
-    for dynamic attributes that cannot be enumerated in advance,
-    because their names depend on dynamic information such as the
-    users who are currently running jobs.  When this is specified, one
-    metric per matching attribute is created.  The default metric name
-    is the name of the matched attribute, and the default value is the
-    value of that attribute.  As usual, the \Attr{Value} expression
-    may be used when the raw attribute value needs to be manipulated
-    before publication.  However, since the name of the attribute is
-    not known in advance, a special ClassAd attribute in the daemon ClassAd
-    is provided to allow the \Attr{Value} expression to refer to it.
-    This special attribute is named \Attr{Regex}.  Another special
-    feature is the ability to refer to text matched by regular
-    expression groups defined by parentheses within the regular
-    expression.  These may be substituted into the values of other
-    string attributes such as \Attr{Name} and \Attr{Desc}.  This is
-    done by putting macros in the string values.  \verb|"\\1"| is
-    replaced by the first group, \verb|"\\2"| by the second group, and
-    so on.
-
-  \item[Aggregate] This string value specifies an aggregation function
-    to apply, instead of publishing individual metrics for each daemon
-    ClassAd.  Possible values are \verb|"sum"|, \verb|"avg"|, \verb|"max"|,
-    and \verb|"min"|.
-
-  \item[AggregateGroup] When an aggregate function has been specified,
-    this string value specifies which aggregation group the current
-    daemon ClassAd belongs to.  The default is the metric name.  This
-    feature works like GROUP BY in SQL.  The aggregation function
-    produces one result per value of \Attr{AggregateGroup}.  A single
-    aggregate group would therefore be appropriate for a pool-wide
-    metric.  Example use of aggregate grouping: if one wished to
-    publish the sum of an attribute across different types of slot
-    ClassAds, one could make the metric name an expression that is unique
-    to each type.  The default \Attr{AggregateGroup} would be set
-    accordingly.  Note that the assumption is still that the result
-    is a pool-wide metric, so by default it is associated with the
-    \Condor{collector} daemon's host.
-    To group by machine and publish the result into
-    the Ganglia page associated with each machine, one should make
-    the \Attr{AggregateGroup} contain the machine name and override
-    the default \Attr{Machine} attribute to be the daemon's machine
-    name, rather than the \Condor{collector}'s.
-
-  \item[Machine] The name of the host associated with this metric.  If
-    \Macro{GANGLIAD\_DEFAULT\_MACHINE} is not specified, the default
-    is taken from the \Attr{Machine} attribute of the daemon ClassAd.
-    If the daemon name is of the form \verb|name@hostname|, this may
-    indicate that there are multiple instances of HTCondor running on
-    the same machine.  To avoid the metrics from these instances
-    overwriting each other, the default machine name is set to the
-    daemon name in this case.  For aggregate metrics, the default
-    value of \Attr{Machine} will be the name of the \Condor{collector} host.
-
-  \item[IP] A string containing the IP address of the host associated
-    with this metric.  If \Macro{GANGLIAD\_DEFAULT\_IP} is not
-    specified, the default is extracted from the \Attr{MyAddress}
-    attribute of the daemon ClassAd.  This value must be unique for each
-    machine published to Ganglia.  It need not be a valid IP address.
-    If the value of \Attr{Machine} contains an \verb|"@"| sign, the
-    default IP value will be set to the same value as \Attr{Machine}
-    in order to make the IP value unique to each instance of HTCondor
-    running on the same host.
-
-  \end{description}
 
 \end{description}

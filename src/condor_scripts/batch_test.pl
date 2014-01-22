@@ -73,17 +73,13 @@ use CondorUtils;
 # level 5 - debug statements from Condor.pm
 #
 # There is no reason not to have debug always on the the level
-# pretty completely controls it. All DebugOff calls
-# have been removed.
 #
 # CondorPersonal.pm has a similar but separate mechanism.
 #
 #################################################################
 
-Condor::DebugOff();
-Condor::DebugLevel(2);
-CondorPersonal::DebugLevel(2);
-CondorPersonal::DebugOff();
+Condor::DebugLevel(1);
+CondorPersonal::DebugLevel(1);
 my @debugcollection = ();
 
 #################################################################
@@ -1694,7 +1690,7 @@ sub TestCondorHereAlive
 	
 	print "TestCondorHereAlive: log location is $location\n";
 	# leave file with pids of running daemons here $location/WHOPIDS
-	CondorPersonal::CollectWhoPids($location,"ALLPIDFILE");
+	#CondorPersonal::CollectWhoPids($location,"ALLPIDFILE");
 
 	#We want to compare the current daemon_list if log dirs match
 	runCondorTool("condor_config_val log",\@logreplies,2);

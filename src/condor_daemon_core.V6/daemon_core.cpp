@@ -3834,7 +3834,7 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 		    args->accepted_sock = (Stream *) ((ReliSock *)insock)->accept();
 
 		    if ( !(args->accepted_sock) ) {
-		        dprintf(D_ALWAYS, "DaemonCore: accept() failed!");
+		        dprintf(D_ALWAYS, "DaemonCore: accept() failed!\n");
 		        // no need to add to work pool if we fail to accept
 		        delete args;
 		        return;
@@ -7260,7 +7260,6 @@ int DaemonCore::Create_Process(
 	//
 	newpid = piProcess.dwProcessId;
 	
-#ifdef HAVE_SCHED_SETAFFINITY
 	/* if we have an affinity array mask then: */
 	if ( affinity_mask ) {
 		
@@ -7292,7 +7291,6 @@ int DaemonCore::Create_Process(
 		}
 
 	}
-#endif
 
 	// if requested, register a process family with the procd and unsuspend
 	// the process
@@ -8940,6 +8938,7 @@ DaemonCore::WatchPid(PidEntry *pidentry)
 			pidentry->watcherEvent = entry->event;
 			(entry->nEntries)++;
 			if ( !::SetEvent(entry->event) ) {
+				::LeaveCriticalSection(&(entry->crit_section));
 				EXCEPT("SetEvent failed");
 			}
 			alldone = TRUE;
