@@ -624,7 +624,7 @@ int Sock::bind(condor_protocol proto, bool outbound, int port, bool loopback)
     }
 
 	// if stream not assigned to a sock, do it now	*/
-	if (_state == sock_virgin) assign(proto);
+	if (_state == sock_virgin) assign(proto, INVALID_SOCKET);
 
 	if (_state != sock_assigned) {
 		dprintf(D_ALWAYS, "Sock::bind - _state is not correct\n");
@@ -676,8 +676,9 @@ int Sock::bind(condor_protocol proto, bool outbound, int port, bool loopback)
 			addr.set_addr_any();
 		} else {
 			addr = get_local_ipaddr();
-			if (addr.is_ipv4() && proto==CP_IPV6)
+			if (addr.is_ipv4() && proto==CP_IPV6) {
 				addr.convert_to_ipv6();
+			}
 		}
 		addr.set_port((unsigned short)port);
 

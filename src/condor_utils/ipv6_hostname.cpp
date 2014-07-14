@@ -10,6 +10,8 @@
 #include "my_hostname.h"
 
 static condor_sockaddr local_ipaddr;
+static condor_sockaddr local_ipv4addr;
+static condor_sockaddr local_ipv6addr;
 static MyString local_hostname;
 static MyString local_fqdn;
 static bool hostname_initialized = false;
@@ -32,6 +34,7 @@ void init_local_hostname()
 		// so I aggregated all of them into here.
 
 	bool ipaddr_inited = false;
+	bool init_proto_specific = false;
 	char hostname[MAXHOSTNAMELEN];
 	int ret;
 
@@ -54,6 +57,9 @@ void init_local_hostname()
 	if (param(network_interface, "NETWORK_INTERFACE", "*")) {
 		if (local_ipaddr.from_ip_string(network_interface))
 			ipaddr_inited = true;
+		if (network_interface == "*") {
+			init_proto_specific = true;
+		}
 	}
 
 		// Dig around for an IP address in the interfaces
@@ -70,6 +76,7 @@ void init_local_hostname()
 			// invalid IP address.
 			ASSERT(FALSE);
 		}
+		init_proto_specific = true;
 		ipaddr_inited = true;
 	}
 
@@ -88,7 +95,9 @@ void init_local_hostname()
 	addrinfo_iterator ai;
 
 retry:
-	ret = ipv6_getaddrinfo(hostname, NULL, ai);
+	addrinfo hint = get_default_hint();
+	hint.ai_family = AF_UNSPEC;
+	ret = ipv6_getaddrinfo(hostname, NULL, ai, hint);
 	if (ret) {
 		dprintf(D_ALWAYS, "init_local_hostname: ipv6_getaddrinfo() could not look up %s: %s (%d)\n", 
 			hostname, gai_strerror(ret), ret);
@@ -116,7 +125,11 @@ retry:
 		local_hostname_desireability = desireability;
 
 		if (!ipaddr_inited)
+		{
 			local_ipaddr = addr;
+		}
+		if (init_proto_specific && addr.is_ipv6()) { local_ipv6addr = addr; }
+		if (init_proto_specific && addr.is_ipv4()) { local_ipv4addr = addr; }
 
 		const char* dotpos = strchr(name, '.');
 		if (dotpos) { // consider it as a FQDN
@@ -138,10 +151,12 @@ retry:
 	hostname_initialized = true;
 }
 
-condor_sockaddr get_local_ipaddr()
+condor_sockaddr get_local_ipaddr(condor_protocol proto)
 {
 	if (!hostname_initialized)
 		init_local_hostname();
+	if ((proto == CP_IPV4) && local_ipv4addr.is_ipv4()) { return local_ipv4addr; }
+	if ((proto == CP_IPV6) && local_ipv6addr.is_ipv6()) { return local_ipv6addr; }
 	return local_ipaddr;
 }
 

@@ -158,7 +158,7 @@ int condor_getsockname_ex(int sockfd, condor_sockaddr& addr)
 	ret = condor_getsockname(sockfd, addr);
 	if (ret == 0 && addr.is_addr_any()) {
 		unsigned short portno = addr.get_port();
-		addr = get_local_ipaddr();
+		addr = get_local_ipaddr(addr.is_ipv6() ? CP_IPV6 : CP_IPV4);
 		addr.set_port(portno);
 	}
 

@@ -388,9 +388,9 @@ MyString condor_sockaddr::to_ip_string() const
 
 const char* condor_sockaddr::to_ip_string(char* buf, int len) const
 {
-	if ( is_ipv4() ) 
+	if ( is_ipv4() ) {
 		return inet_ntop(AF_INET, &v4.sin_addr, buf, len);	
-	else if (is_ipv6()) {
+	} else if (is_ipv6()) {
 			// [m] Special Case for IPv4-mapped-IPv6 string
 			// certain implementation such as IpVerify internally uses
 			// IPv6 format to store all IP addresses.
@@ -428,7 +428,7 @@ MyString condor_sockaddr::to_ip_string_ex() const
 {
 		// no need to check is_valid()
 	if ( is_addr_any() )
-		return get_local_ipaddr().to_ip_string();
+		return get_local_ipaddr(is_ipv6() ? CP_IPV6 : CP_IPV4).to_ip_string();
 	else
 		return to_ip_string();
 }
@@ -437,7 +437,7 @@ const char* condor_sockaddr::to_ip_string_ex(char* buf, int len) const
 {
 		// no need to check is_valid()
 	if (is_addr_any())
-		return get_local_ipaddr().to_ip_string(buf, len);
+		return get_local_ipaddr(is_ipv6() ? CP_IPV6 : CP_IPV4).to_ip_string(buf, len);
 	else
 		return to_ip_string(buf, len);
 }

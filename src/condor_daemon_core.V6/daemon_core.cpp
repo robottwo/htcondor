@@ -9616,6 +9616,8 @@ InitCommandSocket(condor_protocol proto, int port, DaemonCore::SockPair & sock_p
 			}
 
 		}
+		if (proto == CP_IPV6) { dprintf(D_ALWAYS, "Bound socket is ipv6: %d\n", rsock->my_addr().is_ipv6()); }
+		if (proto == CP_IPV4) { dprintf(D_ALWAYS, "Bound socket is ipv4: %d\n", rsock->my_addr().is_ipv4()); }
 		if( !rsock->listen() ) {
 			if (fatal) {
 				EXCEPT( "Failed to post listen on command ReliSock" );
@@ -9733,19 +9735,19 @@ InitCommandSockets(int port, DaemonCore::SockPairVec & socks, bool want_udp, boo
 
 	DaemonCore::SockPairVec new_socks;
 
-	if(param_boolean("ENABLE_IPV4", true)) {
+	if(param_boolean("ENABLE_IPV6", true)) {
 		DaemonCore::SockPair sock_pair;
-		if( ! InitCommandSocket(CP_IPV4, port, sock_pair, want_udp, fatal)) {
-			dprintf(D_ALWAYS | D_FAILURE, "Warning: Failed to create IPv4 command socket.\n");
+		if( ! InitCommandSocket(CP_IPV6, port, sock_pair, want_udp, fatal)) {
+			dprintf(D_ALWAYS | D_FAILURE, "Warning: Failed to create IPv6 command socket.\n");
 			return false;
 		}
 		new_socks.push_back(sock_pair);
 	}
 
-	if(param_boolean("ENABLE_IPV6", true)) {
+	if(param_boolean("ENABLE_IPV4", true)) {
 		DaemonCore::SockPair sock_pair;
-		if( ! InitCommandSocket(CP_IPV6, port, sock_pair, want_udp, fatal)) {
-			dprintf(D_ALWAYS | D_FAILURE, "Warning: Failed to create IPv6 command socket.\n");
+		if( ! InitCommandSocket(CP_IPV4, port, sock_pair, want_udp, fatal)) {
+			dprintf(D_ALWAYS | D_FAILURE, "Warning: Failed to create IPv4 command socket.\n");
 			return false;
 		}
 		new_socks.push_back(sock_pair);
