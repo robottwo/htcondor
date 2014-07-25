@@ -504,6 +504,24 @@ int chirp_ulog(int argc, char **argv) {
 	DISCONNECT_AND_RETURN(client, rval);
 }
 
+/*
+ * chirp_phase
+ *
+ */
+
+int chirp_phase(int argc, char **argv) {
+	if (argc != 3) {
+		printf("condor_chirp phase phasestring\n");
+		return -1;
+	}
+
+	struct chirp_client *client = 0;
+	CONNECT_STARTER(client);
+
+    int rval = chirp_client_phase(client, argv[2]);
+	DISCONNECT_AND_RETURN(client, rval);
+}
+
 int chirp_read(int argc, char **argv) {
 	int fileOffset = 2;
 	int offset = 0;
@@ -995,6 +1013,7 @@ void usage() {
         printf("condor_chirp set_last_commit attribute_value\n");
         printf("condor_chirp set_expected_commit attribute_value\n");
 	printf("condor_chirp ulog text\n");
+	printf("condor_chirp phase phasestring\n");
 	printf("condor_chirp read [-offset offset] [-stride length skip] "
 		"remote_file length\n");
 	printf("condor_chirp write [-offset remote_offset] [-stride length skip] "
@@ -1048,6 +1067,8 @@ main(int argc, char **argv) {
 		ret_val = chirp_set_expected_commit(argc, argv);
 	} else if (strcmp("ulog", argv[1]) == 0) {
 		ret_val = chirp_ulog(argc, argv);
+	} else if (strcmp("phase", argv[1]) == 0) {
+		ret_val = chirp_phase(argc, argv);
 	} else if (strcmp("read", argv[1]) == 0) {
 		ret_val = chirp_read(argc, argv);
 	} else if (strcmp("write", argv[1]) == 0) {
