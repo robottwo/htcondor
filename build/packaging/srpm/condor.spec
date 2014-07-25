@@ -1109,9 +1109,6 @@ rm -rf %{buildroot}
 %_libexecdir/condor/sshd.sh
 %_libexecdir/condor/condor_history_helper
 %_libexecdir/condor/condor_job_router
-%_libexecdir/condor/condor_pid_ns_init
-%_libexecdir/condor/condor_urlfetch
-%_libexecdir/condor/config_fetch
 %if %glexec
 %_libexecdir/condor/condor_glexec_setup
 %_libexecdir/condor/condor_glexec_run
@@ -1147,9 +1144,6 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_gangliad
 %_libexecdir/condor/condor_ckpt_probe
 %_libexecdir/condor/condor_history_helper
-%_libexecdir/condor/condor_pid_ns_init
-%_libexecdir/condor/condor_urlfetch
-%_libexecdir/condor/config_fetch
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
 %_mandir/man1/condor_chirp.1.gz
@@ -1267,7 +1261,6 @@ rm -rf %{buildroot}
 %_sbindir/condor_startd
 %_sbindir/condor_starter
 %_sbindir/condor_store_cred
-%_sbindir/condor_testwritelog
 %_sbindir/condor_transferd
 %_sbindir/condor_updates_stats
 %_sbindir/ec2_gahp
