@@ -1109,6 +1109,8 @@ rm -rf %{buildroot}
 %_libexecdir/condor/sshd.sh
 %_libexecdir/condor/condor_history_helper
 %_libexecdir/condor/condor_job_router
+%_libexecdir/condor/condor_pid_ns_init
+%_libexecdir/condor/condor_urlfetch
 %if %glexec
 %_libexecdir/condor/condor_glexec_setup
 %_libexecdir/condor/condor_glexec_run
@@ -1143,20 +1145,22 @@ rm -rf %{buildroot}
 %_libexecdir/condor/condor_dagman_metrics_reporter
 %_libexecdir/condor/condor_gangliad
 %_libexecdir/condor/condor_ckpt_probe
-%_libexecdir/condor/condor_history_helper
 %_mandir/man1/condor_advertise.1.gz
 %_mandir/man1/condor_check_userlogs.1.gz
 %_mandir/man1/condor_chirp.1.gz
 %_mandir/man1/condor_cod.1.gz
 %_mandir/man1/condor_config_val.1.gz
 %_mandir/man1/condor_dagman.1.gz
+%_mandir/man1/condor_dagman_metrics_reporter.1.gz
 %_mandir/man1/condor_fetchlog.1.gz
 %_mandir/man1/condor_findhost.1.gz
+%_mandir/man1/condor_gpu_discovery.1.gz
 %_mandir/man1/condor_history.1.gz
 %_mandir/man1/condor_hold.1.gz
 %_mandir/man1/condor_master.1.gz
 %_mandir/man1/condor_off.1.gz
 %_mandir/man1/condor_on.1.gz
+%_mandir/man1/condor_pool_job_report.1.gz
 %_mandir/man1/condor_preen.1.gz
 %_mandir/man1/condor_prio.1.gz
 %_mandir/man1/condor_q.1.gz
@@ -1168,6 +1172,7 @@ rm -rf %{buildroot}
 %_mandir/man1/condor_restart.1.gz
 %_mandir/man1/condor_rm.1.gz
 %_mandir/man1/condor_run.1.gz
+%_mandir/man1/condor_sos.1.gz
 %_mandir/man1/condor_stats.1.gz
 %_mandir/man1/condor_status.1.gz
 %_mandir/man1/condor_store_cred.1.gz
@@ -1175,6 +1180,7 @@ rm -rf %{buildroot}
 %_mandir/man1/condor_submit_dag.1.gz
 %_mandir/man1/condor_transfer_data.1.gz
 %_mandir/man1/condor_updates_stats.1.gz
+%_mandir/man1/condor_urlfetch.1.gz
 %_mandir/man1/condor_userlog.1.gz
 %_mandir/man1/condor_userprio.1.gz
 %_mandir/man1/condor_vacate.1.gz
@@ -1212,6 +1218,7 @@ rm -rf %{buildroot}
 %_bindir/condor_reschedule
 %_bindir/condor_userprio
 %_bindir/condor_dagman
+%_bindir/condor_pool_job_report
 %_bindir/condor_rm
 %_bindir/condor_vacate
 %_bindir/condor_run
