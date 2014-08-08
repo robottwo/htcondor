@@ -84,8 +84,13 @@
 %define aviary 1
 %endif
 
+# Temporarily turn cream off
+%define cream 0
+
 %define glexec 1
-%define parallel_setup 1
+
+# Temporarily turn parallel_setup off
+%define parallel_setup 0
 
 # These flags are meant for developers; it allows one to build HTCondor
 # based upon a git-derived tarball, instead of an upstream release tarball
@@ -333,7 +338,7 @@ Requires: mailx
 Requires: condor-classads = %{version}-%{release}
 Requires: condor-procd = %{version}-%{release}
 
-%if %blahp
+%if %blahp && ! %uw_build
 Requires: blahp >= 1.16.1
 %endif
 
@@ -761,6 +766,9 @@ export CMAKE_PREFIX_PATH=/usr
 %endif
 %endif
 
+# Patch condor_config.generic for 64-bit rpm
+(cd src/condor_examples; patch < condor_config.generic.rpm.patch)
+
 %if %uw_build || %std_univ
 # build externals first to avoid dependency issues
 make %{?_smp_mflags} externals
@@ -821,7 +829,7 @@ sed -e "s:^LIB\s*=.*:LIB = \$(RELEASE_DIR)/$LIB/condor:" \
 # Install the basic configuration, a Personal HTCondor config. Allows for
 # yum install condor + service condor start and go.
 mkdir -m0755 %{buildroot}/%{_sysconfdir}/condor/config.d
-cp %{buildroot}/etc/examples/condor_config.local %{buildroot}/%{_sysconfdir}/condor/config.d/00personal_condor.config
+# cp %{buildroot}/etc/examples/condor_config.local %{buildroot}/%{_sysconfdir}/condor/config.d/00personal_condor.config
 %if %parallel_setup
 cp %{SOURCE5} %{buildroot}/%{_sysconfdir}/condor/config.d/20dedicated_scheduler_condor.config
 %endif
@@ -1092,7 +1100,7 @@ rm -rf %{buildroot}
 %_datadir/condor/CondorTest.pm
 %_datadir/condor/CondorUtils.pm
 %dir %_sysconfdir/condor/config.d/
-%_sysconfdir/condor/config.d/00personal_condor.config
+#%_sysconfdir/condor/config.d/00personal_condor.config
 %_sysconfdir/condor/condor_ssh_to_job_sshd_config_template
 %if %gsoap || %uw_build
 %dir %_datadir/condor/webservice/
@@ -1244,6 +1252,7 @@ rm -rf %{buildroot}
 %_bindir/condor_ping
 %_bindir/condor_tail
 %_bindir/condor_qsub
+%_bindir/condor_pool_job_report
 # reconfig_schedd, restart
 # sbin/condor is a link for master_off, off, on, reconfig,
 %_sbindir/condor_advertise
@@ -1279,6 +1288,8 @@ rm -rf %{buildroot}
 %_sbindir/remote_gahp
 %_sbindir/nordugrid_gahp
 %_sbindir/gce_gahp
+%_sbindir/boinc_gahp
+%_sbindir/cream_gahp
 %_libexecdir/condor/condor_gpu_discovery
 %_sbindir/condor_vm_vmware
 %config(noreplace) %_sysconfdir/condor/condor_config.local
