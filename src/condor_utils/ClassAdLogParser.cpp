@@ -121,13 +121,11 @@ ClassAdLogParser::setNextOffset(long offset)
 FileOpErrCode 
 ClassAdLogParser::openFile() {
     // open a job_queue.log file
-    printf("Opening file with parser %p.\n", this);
 #ifdef _NO_CONDOR_
     log_fp = fopen(job_queue_name, "r");
 #else
     log_fp = safe_fopen_wrapper_follow(job_queue_name, "r");
 #endif
-    printf("Opened file %p.\n", log_fp);
 
     if (log_fp == NULL) {
         return FILE_OPEN_ERROR;
@@ -138,7 +136,6 @@ ClassAdLogParser::openFile() {
 FileOpErrCode 
 ClassAdLogParser::closeFile() {
 	if (log_fp != NULL) {
-		printf("Closing file %p.\n", log_fp);
 		fclose(log_fp);
 		log_fp = NULL;
 	}

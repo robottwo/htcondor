@@ -80,7 +80,6 @@ ClassAdLogIterator::operator==(const ClassAdLogIterator &rhs)
 	}
 	if (m_current->isDone() && rhs.m_current->isDone())
 	{
-		printf("Iterator is done.\n");
 		return true;
 	}
 	if (m_fname != rhs.m_fname)
@@ -102,18 +101,16 @@ ClassAdLogIterator::operator==(const ClassAdLogIterator &rhs)
 void
 ClassAdLogIterator::Next()
 {
-	printf("Calling next\n");
+	//printf("Calling next\n");
 	ProbeResultType probe_st;
 	FileOpErrCode fst;
 
 	if (!m_eof || (m_current.get() && m_current->getEntryType() == ClassAdLogIterEntry::INIT))
 	{
-		printf("Loading next entry.\n");
 		Load();
 		if (m_eof)
 		{
-			m_parser->closeFile();
-			printf("Update probe info.\n");
+			//printf("Update probe info.\n");
 			m_prober->incrementProbeInfo();
 		}
 		return;
@@ -122,24 +119,24 @@ ClassAdLogIterator::Next()
 
 	if (m_parser->getFilePointer() == NULL)
 	{
-		printf("Re-opening file with parser %p.\n", m_parser.get());
+		//printf("Re-opening file with parser %p.\n", m_parser.get());
 		fst = m_parser->openFile();
 		if(fst == FILE_OPEN_ERROR) {
 			dprintf(D_ALWAYS, "Failed to open %s: errno=%d\n", m_parser->getJobQueueName(), errno);
 			m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::ERR));
 			return;
 		}
-		m_sentry.reset(new FileSentry(m_parser->getFilePointer()));
+		//m_sentry.reset(new FileSentry(m_parser->getFilePointer()));
 	}
 
-	printf("Calling probe with file pointer %p.\n", m_parser->getFilePointer());
+	//printf("Calling probe with file pointer %p.\n", m_parser->getFilePointer());
 	probe_st = m_prober->probe(m_parser->getLastCALogEntry(), m_parser->getFilePointer());
 
 	bool success = true;
 	switch (probe_st)
 	{
 		case INIT_QUILL:
-			printf("Other.\n");
+			//printf("Other.\n");
 			m_parser->setNextOffset(0);
 			m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::INIT));
 			return;
@@ -147,18 +144,18 @@ ClassAdLogIterator::Next()
 		case PROBE_ERROR:
 			m_parser->setNextOffset(0);
 			m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::RESET));
-			printf("Error.\n");
+			//printf("Error.\n");
 			return;
 		case ADDITION:
-			printf("Addition.\n");
+			//printf("Addition.\n");
 			success = Load();
 			return;
 		case NO_CHANGE:
-			printf("No change.\n");
+			//printf("No change.\n");
 			m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::NOCHANGE));
 			break;
 		case PROBE_FATAL_ERROR:
-			printf("Fatal error.\n");
+			//printf("Fatal error.\n");
 			m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::ERR));
 			return;
 	}
@@ -167,9 +164,9 @@ ClassAdLogIterator::Next()
 	if (success)
 	{
 		// update prober to most recent observations about the job log file
-		printf("Update probe info.\n");
+		//printf("Update probe info.\n");
 		m_prober->incrementProbeInfo();
-		printf("Update probe info done.\n");
+		//printf("Update probe info done.\n");
 	}
 
 	return;
@@ -197,8 +194,9 @@ ClassAdLogIterator::Load()
 	}
 	else
 	{
-		printf("Hit EOF.\n");
+		//printf("Hit EOF.\n");
 		m_parser->closeFile();
+		m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::NOCHANGE));
 		m_eof = true;
 	}
 	return true;
@@ -210,26 +208,26 @@ ClassAdLogIterator::Process(const ClassAdLogEntry &log_entry)
 {
 	switch(log_entry.op_type) {
 	case CondorLogOp_NewClassAd:
-		printf("New classad\n");
+		//printf("New classad\n");
 		m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::NEW_CLASSAD));
 		if (log_entry.key) {m_current->setKey(log_entry.key);}
 		if (log_entry.mytype) {m_current->setAdType(log_entry.mytype);}
 		if (log_entry.targettype) {m_current->setAdTarget(log_entry.targettype);}
 		break;
 	case CondorLogOp_DestroyClassAd:
-		printf("Destroy classad\n");
+		//printf("Destroy classad\n");
 		m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::DESTROY_CLASSAD));
 		if (log_entry.key) {m_current->setKey(log_entry.key);}
                 break;
 	case CondorLogOp_SetAttribute:
-		printf("Set attribute\n");
+		//printf("Set attribute\n");
 		m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::SET_ATTRIBUTE));
 		if (log_entry.key) {m_current->setKey(log_entry.key);}
 		if (log_entry.name) {m_current->setName(log_entry.name);}
 		if (log_entry.value) {m_current->setValue(log_entry.value);}
 		break;
 	case CondorLogOp_DeleteAttribute:
-		printf("Delete attribute\n");
+		//printf("Delete attribute\n");
 		m_current.reset(new ClassAdLogIterEntry(ClassAdLogIterEntry::DELETE_ATTRIBUTE));
 		if (log_entry.key) {m_current->setKey(log_entry.key);}
 		if (log_entry.name) {m_current->setName(log_entry.name);}

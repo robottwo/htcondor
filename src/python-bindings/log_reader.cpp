@@ -11,10 +11,20 @@
 #include <memory>
 #include <boost/python.hpp>
 
+#include "classad/value.h"
+#include "classad/source.h"
+#include "classad/literals.h"
+
 #include "old_boost.h"
+#include "exprtree_wrapper.h"
 #include "log_reader.h"
 
-#ifdef USE_INOTIFY
+#ifdef HAVE_INOTIFY
+#define LOG_READER_USE_INOTIFY
+#endif
+
+#ifdef LOG_READER_USE_INOTIFY
+#include <sys/inotify.h>
 #define INOTIFY_BUFSIZE sizeof(struct inotify_event)
 #else
 #define INOTIFY_BUFSIZE 20
@@ -25,13 +35,13 @@ class InotifySentry {
 public:
     InotifySentry(const std::string &fname) : m_fd(-1)
     {
-#ifdef USE_INOTIFY
+#ifdef LOG_READER_USE_INOTIFY
         if ((m_fd = inotify_init()) == -1)
         {
             THROW_EX(IOError, "Failed to create inotify instance.");
         }
-        fcntl(fd, F_SETFD, FD_CLOEXEC);
-        fcntl(fd, F_SETFL, O_NONBLOCK);
+        fcntl(m_fd, F_SETFD, FD_CLOEXEC);
+        fcntl(m_fd, F_SETFL, O_NONBLOCK);
 
         if (inotify_add_watch(m_fd, fname.c_str(), IN_MODIFY | IN_ATTRIB | IN_DELETE_SELF) == -1)
         {
@@ -49,7 +59,7 @@ public:
     {
         if (m_fd == -1) {return -1;}
         int events = 0;
-#ifdef USE_INOTIFY
+#ifdef LOG_READER_USE_INOTIFY
         struct inotify_event event;
         int size, count = 0;
         errno = 0;
@@ -61,10 +71,10 @@ public:
             }
             do
             {
-                size = read(m_fd, static_cast<char *>(&event)+count, INOTIFY_BUFSIZE-count);
+                size = read(m_fd, reinterpret_cast<char *>(&event)+count, INOTIFY_BUFSIZE-count);
                 count += size;
             }
-            while ((count != INOTIFY_BUFSIZE) || (size == -1 && errno != EINTR)):
+            while ((count != INOTIFY_BUFSIZE) && (size != -1 || errno == EINTR));
             count = 0;
             events++;
             assert(event.len == 0);
@@ -80,10 +90,22 @@ private:
 
 
 LogReader::LogReader(const std::string &fname)
-  : m_reader(new ClassAdLogReaderV2(fname)),
+  : m_fname(fname),
+    m_reader(new ClassAdLogReaderV2(fname)),
     m_iter(m_reader->begin()),
     m_blocking(false)
 {
+}
+
+
+bool
+LogReader::useInotify()
+{
+#ifdef LOG_READER_USE_INOTIFY
+    return true;
+#else
+    return false;
+#endif
 }
 
 
@@ -108,6 +130,7 @@ LogReader::wait()
 void
 LogReader::wait_internal(int timeout_ms)
 {
+    if (timeout_ms == 0) {return;}
     int time_remaining = timeout_ms;
     int step = 1000;
     while (m_iter->getEntryType() == ClassAdLogIterEntry::NOCHANGE)
@@ -117,7 +140,9 @@ LogReader::wait_internal(int timeout_ms)
         fd.events = POLLIN;
         if (fd.fd == -1)
         {
+            Py_BEGIN_ALLOW_THREADS
             sleep(1);
+            Py_END_ALLOW_THREADS
             if (time_remaining >= 0 && time_remaining < 1000)
             {
                 ++m_iter;
@@ -127,7 +152,13 @@ LogReader::wait_internal(int timeout_ms)
         else
         {
             if (time_remaining != -1 && time_remaining < 1000) {step = time_remaining;}
+            Py_BEGIN_ALLOW_THREADS
             ::poll(&fd, 1, step);
+            Py_END_ALLOW_THREADS
+        }
+        if (PyErr_CheckSignals() == -1)
+        {
+            boost::python::throw_error_already_set();
         }
         ++m_iter;
         time_remaining -= step;
@@ -144,8 +175,22 @@ convert_to_dict(const ClassAdLogIterEntry &event)
     if (event.getAdType().size()) {result["type"] = event.getAdType();}
     if (event.getAdTarget().size()) {result["target"] = event.getAdTarget();}
     if (event.getKey().size()) {result["key"] = event.getKey();}
-    if (event.getValue().size()) {result["value"] = event.getValue();}
     if (event.getName().size()) {result["name"] = event.getName();}
+    if (event.getValue().size())
+    {
+        classad::ClassAdParser parser;
+        classad::ExprTree *expr = NULL;
+        if (parser.ParseExpression(event.getValue(), expr))
+        {
+            result["value"] = ExprTreeHolder(expr, true);
+        }
+        else
+        {
+            classad::Value value; value.SetErrorValue();
+            classad::ExprTree *expr = classad::Literal::MakeLiteral(value);
+            result["value"] = ExprTreeHolder(expr, true);
+        }
+    }
     return result;
 }
 
@@ -165,18 +210,18 @@ LogReader::next()
 {
     if (m_watch.get()) {m_watch->clear();}
 
-    boost::python::dict result = convert_to_dict(*(*(m_iter++)));
-
     if (m_blocking && m_iter->getEntryType() == ClassAdLogIterEntry::NOCHANGE)
     {
-        wait_internal(1000);
+        wait_internal(-1);
         m_watch->clear();
     }
-
-    if (m_iter == m_reader->end())
+    else if (m_iter == m_reader->end())
     {
         THROW_EX(StopIteration, "All log events processed");
     }
+
+    boost::python::dict result = convert_to_dict(*(*(m_iter++)));
+
     return result;
 }
 
@@ -204,9 +249,14 @@ void export_log_reader()
         .def("setBlocking", &LogReader::setBlocking, "Determine whether the iterator blocks waiting for new events.\n"
             ":param blocking: Whether or not the next() function should block.\n"
             ":return: The previous value for the blocking.")
+        .add_property("use_inotify", &LogReader::useInotify)
         .def("poll", &LogReader::poll, "Poll the log file; block until an event is available.\n"
-            ":param timeout: The timeout in milliseconds.\n"
-            ":return: A dictionary corresponding to the next event in the log file.  Returns None on timeout.\n")
+            ":param timeout: The timeout in milliseconds. Defaults to -1, or waiting indefinitely.  Set to 0 to return immediately if there are no events.\n"
+#if BOOST_VERSION < 103400
+            ":return: A dictionary corresponding to the next event in the log file.  Returns None on timeout.", (boost::python::arg("timeout")=-1))
+#else
+            ":return: A dictionary corresponding to the next event in the log file.  Returns None on timeout.", (boost::python::arg("self"), boost::python::arg("timeout")=-1))
+#endif
         ;
 }
 

@@ -64,6 +64,8 @@ if ( WITH_PYTHON_BINDINGS AND PYTHONLIBS_FOUND AND Boost_PYTHON_LIBRARY AND NOT 
   string( COMPARE EQUAL ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} INSOURCEBUILD)
   if (BUILD_TESTING)
     if(NOT INSOURCEBUILD)
+      add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/log_reader_tests.py DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/log_reader_tests.py COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/log_reader_tests.py ${CMAKE_CURRENT_BINARY_DIR}/tests/log_reader_tests.py )
+      add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/job_queue.log DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/job_queue.log COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/job_queue.log ${CMAKE_CURRENT_BINARY_DIR}/tests/job_queue.log )
       add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/classad_tests.py DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/classad_tests.py COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/classad_tests.py ${CMAKE_CURRENT_BINARY_DIR}/tests/classad_tests.py )
       add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/htcondor_version_tests.py DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/htcondor_version_tests.py COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/htcondor_version_tests.py ${CMAKE_CURRENT_BINARY_DIR}/tests/htcondor_version_tests.py )
       add_custom_command ( OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tests/htcondor_tests.py DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/htcondor_tests.py COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/tests/htcondor_tests.py ${CMAKE_CURRENT_BINARY_DIR}/tests/htcondor_tests.py )

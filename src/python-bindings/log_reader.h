@@ -17,6 +17,7 @@ public:
     void wait();
     bool setBlocking(bool new_value) {bool prev = m_blocking; m_blocking = new_value; return prev;}
     boost::python::object poll(int timeout_ms);
+    bool useInotify();
 
 private:
     void wait_internal(int timeout_ms);
