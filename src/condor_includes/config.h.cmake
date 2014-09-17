@@ -621,4 +621,7 @@
 /* Define to 1 if the OS has support for the TCP_USER_TIMEOUT setsockopt */
 #cmakedefine HAVE_TCP_USER_TIMEOUT
 
+/* Define to 1 if the OS has support for CLOCK_MONOTONIC */
+#cmakedefine HAVE_CLOCK_MONOTONIC
+
 #endif
