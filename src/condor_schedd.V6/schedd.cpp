@@ -386,6 +386,7 @@ match_rec::match_rec( char const* claim_id, char const* p, PROC_ID* job_id,
 
 	bool suppress_sec_session = true;
 
+	std::string validUsers;
 	if( param_boolean("SEC_ENABLE_MATCH_PASSWORD_AUTHENTICATION",false) ) {
 		if( secSessionId() == NULL ) {
 			dprintf(D_FULLDEBUG,"SEC_ENABLE_MATCH_PASSWORD_AUTHENTICATION: did not create security session from claim id, because claim id does not contain session information: %s\n",publicClaimId());
@@ -417,6 +418,30 @@ match_rec::match_rec( char const* claim_id, char const* p, PROC_ID* job_id,
 			// match rec is destroyed.  (If we failed to create the session,
 			// that may because it already exists, and this is a duplicate
 			// match record that will soon be thrown out.)
+	}
+	IpVerify* ipv = daemonCore->getSecMan()->getIpVerify();
+	condor_sockaddr addr; addr.set_addr_any();
+	std::string auth_id;
+	std::string sinful = "UNKNOWN";
+	if (my_match_ad)
+	{
+		my_match_ad->EvaluateAttrString(ATTR_AUTHENTICATED_IDENTITY, auth_id);
+		if (my_match_ad->EvaluateAttrString(ATTR_MY_ADDRESS, sinful) && !addr.from_sinful(sinful))
+		{
+			addr.from_sinful(sinful);
+		}
+	}
+	MyString deny_reason;
+	if (USER_AUTH_SUCCESS != ipv->Verify(MATCH_STARTD, addr, auth_id.size() ? auth_id.c_str() : NULL, NULL, &deny_reason))
+	{
+		std::string allow_match;
+		param(allow_match, "ALLOW_MATCH_STARTD");
+		StringList sl_allow(allow_match.c_str());
+		if (!auth_id.size() || !the_user || !sl_allow.contains_anycase("self") || auth_id != the_user)
+		{
+			suppressSecSession(true);
+			dprintf(D_ALWAYS, "MATCH_STARTDS: Refused match auth (from %s) due to %s.\n", sinful.c_str(), deny_reason.Value());
+		}
 	}
 
 	std::string value;

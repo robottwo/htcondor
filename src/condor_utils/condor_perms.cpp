@@ -52,6 +52,8 @@ PermString( DCpermission perm )
 		return "ADVERTISE_SCHEDD";
 	case ADVERTISE_MASTER_PERM:
 		return "ADVERTISE_MASTER";
+	case MATCH_STARTD:
+		return "MATCH_STARTD";
 	default:
 		return "Unknown";
 	}
