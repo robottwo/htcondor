@@ -308,16 +308,7 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 	sec_man = new SecMan();
 	audit_log_callback_fn = 0;
 
-	sockTable = new ExtArray<SockEnt>(maxSocket);
-	if(sockTable == NULL)
-	{
-		EXCEPT("Out of memory!");
-	}
-	nSock = 0;
-	nPendingSockets = 0;
-	SockEnt blankSockEnt;
-	memset(&blankSockEnt,'\0',sizeof(SockEnt));
-	sockTable->fill(blankSockEnt);
+	m_sock_manager.initialize(maxSocket)
 
 #ifdef HAVE_EXT_GSOAP
 	soap_ssl_sock = -1;
@@ -488,27 +479,6 @@ DaemonCore::~DaemonCore()
 	for (i=0;i<nSig;i++) {
 		free( sigTable[i].sig_descrip );
 		free( sigTable[i].handler_descrip );
-	}
-
-	if (sockTable != NULL)
-	{
-
-			// There may be CEDAR objects stored in the table, but we
-			// don't want to delete them here.  People who register
-			// sockets in our table have to be responsible for
-			// cleaning up after themselves.  "He who creates should
-			// delete", otherwise the socket(s) may get deleted
-			// multiple times.  The only things we created are the UDP
-			// and TCP command sockets, but we'll delete those down
-			// below, so we just need to delete the table entries
-			// themselves, not the CEDAR objects.  Origional wisdom by
-			// Todd, cleanup of DC command sockets by Derek on 2/26/01
-
-		for (i=0;i<nSock;i++) {
-			free( (*sockTable)[i].iosock_descrip );
-			free( (*sockTable)[i].handler_descrip );
-		}
-		delete sockTable;
 	}
 
 	if (sec_man) {
@@ -1016,15 +986,15 @@ int DaemonCore::Cancel_Command( int command )
 	return FALSE;
 }
 
+// Note: This is a meaningless function as there are many command ports.
+// TODO: DELETEME
 int DaemonCore::InfoCommandPort()
 {
-	if ( initial_command_sock() == -1 ) {
-		// there is no command sock!
-		return -1;
-	}
+	Sock *command_sock = m_sock_manager.getInitialCommandSocket();
+	if (!command_sock) {return -1;}
 
 	// this will return a -1 on error
-	return( ((Sock*)((*sockTable)[initial_command_sock()].iosock))->get_port() );
+	return command_sock->get_port();
 }
 
 // NOTE: InfoCommandSinfulString always returns a pointer to a _static_ buffer!
@@ -1080,17 +1050,16 @@ DaemonCore::InfoCommandSinfulStringMyself(bool usePrivateAddress)
 		}
 	}
 
-	if ( initial_command_sock() == -1 ) {
+	Sock *commandSock = m_sock_manager.getInitialCommandSocket();
 		// there is no command sock!
-		return NULL;
-	}
+	if (!commandSock) {return NULL;}
 
 		// If we haven't initialized our address(es), do so now.
 	if (sinful_public == NULL || m_dirty_sinful) {
 		free( sinful_public );
 		sinful_public = NULL;
 
-		char const *addr = ((Sock*)(*sockTable)[initial_command_sock()].iosock)->get_sinful_public();
+		char const *addr = commandSock->get_sinful_public();
 		if( !addr ) {
 			EXCEPT("Failed to get public address of command socket!");
 		}
@@ -1105,7 +1074,7 @@ DaemonCore::InfoCommandSinfulStringMyself(bool usePrivateAddress)
 		MyString private_sinful_string;
 		char* tmp;
 		if ((tmp = param("PRIVATE_NETWORK_INTERFACE"))) {
-			int port = ((Sock*)(*sockTable)[initial_command_sock()].iosock)->get_port();
+			int port = commandSock->get_port();
 			std::string ipv4, ipv6;
 			std::string private_ip;
 			bool ok = network_interface_to_ip("PRIVATE_NETWORK_INTERFACE",
@@ -1397,6 +1366,15 @@ int DaemonCore::Register_Socket(Stream *iosock, const char* iosock_descrip,
     int     i;
     int     j;
 
+	if ((handler == NULL) && (handlercpp == NULL))
+	{
+		m_sock_manager.registerCommandSocket(iosock, iosock_descrip, handler_descrip, s, perm, handler_type, is_cpp, prev_entry);
+	}
+	else
+	{
+		m_sock_manager.registerSocket(handler, handlercpp, iosock, iosock_descrip, handler_descrip, s, perm, handler_type, is_cpp, prev_entry);
+	}
+/*
     // In sockTable, unlike the others handler tables, we allow for a NULL
 	// handler and a NULL handlercpp - this means a command socket, so use
 	// the default daemon core socket handler which strips off the command.
@@ -1575,12 +1553,14 @@ int DaemonCore::Register_Socket(Stream *iosock, const char* iosock_descrip,
 	// If we are a worker thread, wake up select in the main thread
 	// so the main thread re-computes the fd_sets.
 	Wake_up_select();
-
+*/
 	return i;
 }
 
 int DaemonCore::Cancel_Socket( Stream* insock, void *prev_entry)
 {
+	return m_sock_manager.cancelSock(insock, *prev_entry);
+/*
 	int i,j;
 
 	if (!insock) {
@@ -1652,6 +1632,7 @@ int DaemonCore::Cancel_Socket( Stream* insock, void *prev_entry)
 	Wake_up_select();
 
 	return TRUE;
+*/
 }
 
 // We no longer return "real" file descriptors from Create_Pipe. This
@@ -2378,16 +2359,6 @@ int DaemonCore::Register_Reaper(int rid, const char* reap_descrip,
 }
 
 
-int DaemonCore::Lookup_Socket( Stream *insock )
-{
-	for (int i=0; i < nSock; i++) {
-		if ((*sockTable)[i].iosock == insock) {
-			return i;
-		}
-	}
-	return -1;
-}
-
 int DaemonCore::Cancel_Reaper( int rid )
 {
 	int idx;
@@ -2579,6 +2550,8 @@ void DaemonCore::DumpSocketTable(int flag, const char* indent)
 	dprintf(flag,"\n");
 	dprintf(flag, "%sSockets Registered\n", indent);
 	dprintf(flag, "%s~~~~~~~~~~~~~~~~~~~\n", indent);
+	m_sock_manager.dump(flag, indent);
+/*
 	for (i = 0; i < nSock; i++) {
 		if ( (*sockTable)[i].iosock ) {
 			descrip1 = "NULL";
@@ -2592,6 +2565,7 @@ void DaemonCore::DumpSocketTable(int flag, const char* indent)
 		}
 	}
 	dprintf(flag, "\n");
+*/
 }
 
 void
@@ -3051,7 +3025,7 @@ DaemonCore::Do_Wake_up_select()
 // incoming messages or requests and invoke corresponding handlers.
 void DaemonCore::Driver()
 {
-	Selector	selector;
+	//Selector	selector;
 	int			i;
 	int			tmpErrno;
 	time_t		timeout;
@@ -3200,14 +3174,11 @@ void DaemonCore::Driver()
         dc_stats.TimerRuntime += (runtime - group_runtime);
         group_runtime = runtime;
 
-		// Setup what socket descriptors to select on.  We recompute this
-		// every time because 1) some timeout handler may have removed/added
-		// sockets, and 2) it ain't that expensive....
-		selector.reset();
+		m_sock_manager.updateSelector();
 		min_deadline = 0;
+/*
+		selector.reset();
 		for (i = 0; i < nSock; i++) {
-				// NOTE: keep the following logic for building the
-				// fdset in sync with DaemonCore::ServiceCommandSocket()
 
 				// if a valid entry not already being serviced, add to select
 			if ( (*sockTable)[i].iosock && 
@@ -3257,6 +3228,7 @@ void DaemonCore::Driver()
 				}
             }
 		}
+*/
 
 		if( min_deadline ) {
 			int deadline_timeout = min_deadline - time(NULL) + 1;
@@ -3269,6 +3241,13 @@ void DaemonCore::Driver()
 #if !defined(WIN32)
 		// Add the registered pipe fds into the list of descriptors to
 		// select on.
+		std::vector<std::pair<int, HandlerType> > watchFDs;
+		for (i = 0; i < nPipe; i++) {
+			if ( (*pipeTable)[i].index != -1 ) {    // if a valid entry....
+				int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
+				watchFDs.push_back(make_pair(pipefd, (*pipeTable)[i].handler_type));
+		}
+/*
 		for (i = 0; i < nPipe; i++) {
 			if ( (*pipeTable)[i].index != -1 ) {	// if a valid entry....
 				int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
@@ -3286,6 +3265,7 @@ void DaemonCore::Driver()
 				}
 			}
         }
+*/
 #endif
 
 
@@ -3296,10 +3276,11 @@ void DaemonCore::Driver()
 		if ( ! async_pipe[0].is_connected()) {
 			EXCEPT("DaemonCore:: async_pipe has been unexpectedly closed!");
 		} 
-		selector.add_fd( async_pipe[0].get_file_desc() , Selector::IO_READ );
+		//selector.add_fd( async_pipe[0].get_file_desc() , Selector::IO_READ );
 #else
-		selector.add_fd( async_pipe[0], Selector::IO_READ );
+		//selector.add_fd( async_pipe[0], Selector::IO_READ );
 #endif
+		watchFDs.push_back(make_pair(async_pipe[0], HANDLE_READ));
 
 		// Let other threads run while we are waiting on select
 		CondorThreads::enable_parallel(true);
@@ -3319,7 +3300,8 @@ void DaemonCore::Driver()
 		LeaveCriticalSection(&Big_fat_mutex);
 #endif
 
-		selector.set_timeout( timeout );
+		m_sock_manager.set_timeout(timeout);
+		//selector.set_timeout( timeout );
 
 		errno = 0;
 		time_t time_before = time(NULL);
@@ -3332,7 +3314,9 @@ void DaemonCore::Driver()
 			dprintf(D_ALWAYS, "PERF: entering select\n");
 		}
 
-		selector.execute();
+		m_sock_manager.execute();
+		//selector.execute();
+		const Selector &selector = m_sock_manager.getSelector();
 
 		// update statistics on time spent waiting in select.
 		runtime = _condor_debug_get_time_double();
@@ -3444,7 +3428,10 @@ void DaemonCore::Driver()
 			}
 
 			// scan through the socket table to find which ones select() set
-			for(i = 0; i < nSock; i++) {
+			while ((i = m_sock_manager.getReadySocket()) >= 0)
+			{
+/*
+			for(i = 0; i < nSock; i++) 
 				if ( (*sockTable)[i].iosock && 
 					 (*sockTable)[i].servicing_tid==0 &&
 					 (*sockTable)[i].remove_asap == false ) 
@@ -3453,26 +3440,26 @@ void DaemonCore::Driver()
 					// if the socket was doing a connect(), we check the
 					// writefds and excepfds.  otherwise, check readfds.
 					(*sockTable)[i].call_handler = false;
-					time_t deadline = (*sockTable)[i].iosock->get_deadline();
+*/
+					SockEnt &ent = m_sock_manager.getSocket(i);
+					time_t deadline = ent.iosock->get_deadline();
 					bool sock_timed_out = ( deadline && deadline < now );
 
 					if ( superuser_command_arrived &&
-						 ((*sockTable)[i].iosock != super_dc_rsock &&
-						  (*sockTable)[i].iosock != super_dc_ssock) )
+						 (ent.iosock != super_dc_rsock &&
+						  ent.iosock != super_dc_ssock) )
 					{
 						// do nothing for now, because we know there is a request pending
 						// on the suerperuser command socket, and this is not the
 						// superuser command socket.
 					}
-					else if ( (*sockTable)[i].is_reverse_connect_pending ) {
+					else if ( ent.is_reverse_connect_pending ) {
 						// nothing to do
 					}
-					else if ( (*sockTable)[i].is_connect_pending ) {
+					else if ( ent.is_connect_pending ) {
 
-						if ( selector.fd_ready( (*sockTable)[i].iosock->get_file_desc(),
-												Selector::IO_WRITE ) ||
-							 selector.fd_ready( (*sockTable)[i].iosock->get_file_desc(),
-												Selector::IO_EXCEPT ) ||
+						if ( selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_WRITE ) ||
+							 selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_EXCEPT ) ||
 							 sock_timed_out )
 						{
 							// A connection pending socket has been
@@ -3480,23 +3467,23 @@ void DaemonCore::Driver()
 							// Only call handler if CEDAR confirms the
 							// connect algorithm has completed.
 
-							if ( ((Sock *)(*sockTable)[i].iosock)->
+							if ( (ent.iosock)->
 							      do_connect_finish() != CEDAR_EWOULDBLOCK)
 							{
-								(*sockTable)[i].call_handler = true;
+								ent.call_handler = true;
 							}
 						}
-					} else if ((*sockTable)[i].handler_type == HANDLE_READ || (*sockTable)[i].handler_type == HANDLE_READ_WRITE) {
-						if ( (selector.fd_ready( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_READ ) ) ||
+					} else if (ent.handler_type == HANDLE_READ || ent.handler_type == HANDLE_READ_WRITE) {
+						if ( (selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_READ ) ) ||
 							 sock_timed_out )
 						{
-							(*sockTable)[i].call_handler = true;
+							ent.call_handler = true;
 						}
-					} else if ((*sockTable)[i].handler_type == HANDLE_WRITE || (*sockTable)[i].handler_type == HANDLE_READ_WRITE) {
-						if ( (selector.fd_ready( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_WRITE ) ) ||
+					} else if (ent.handler_type == HANDLE_WRITE || ent.handler_type == HANDLE_READ_WRITE) {
+						if ( (selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_WRITE ) ) ||
 							 sock_timed_out )
 						{
-							(*sockTable)[i].call_handler = true;
+							ent.call_handler = true;
 						}
 					}
 				}	// end of if valid sock entry
@@ -3534,6 +3521,7 @@ void DaemonCore::Driver()
 				}	// end of if valid pipe entry
 			}	// end of for loop through all pipe entries
 
+			m_sock_manager.removeFDs(watchFDs);
 
 			// Now loop through all pipe entries, calling handlers if required.
 			runtime = _condor_debug_get_time_double();
@@ -3573,11 +3561,11 @@ void DaemonCore::Driver()
 #else
 							// UNIX
 							int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
-							selector.reset();
-							selector.set_timeout( 0 );
-							selector.add_fd( pipefd, Selector::IO_READ );
-							selector.execute();
-							if ( selector.timed_out() ) {
+							Selector pselector;
+							pselector.set_timeout( 0 );
+							pselector.add_fd( pipefd, Selector::IO_READ );
+							pselector.execute();
+							if ( pselector.timed_out() ) {
 								// nothing available, try the next entry...
 								continue;
 							}
@@ -3651,30 +3639,33 @@ void DaemonCore::Driver()
 			group_runtime = runtime;
 
 			// Now loop through all sock entries, calling handlers if required.
-			for(i = 0; i < nSock; i++) {
-				if ( (*sockTable)[i].iosock ) {	// if a valid entry...
+			for (std::vector<int>::iterator it = m_sock_manager.begin(); it != m_sock_manager.end(); it++)
+			{
+				SockEnt &ent = m_sock_manager.getSocket(*it);
+			//for(i = 0; i < nSock; i++) {
+				if ( ent.iosock ) {	// if a valid entry...
 
-					if ( (*sockTable)[i].call_handler ) {
+					if ( ent.call_handler ) {
 
-						(*sockTable)[i].call_handler = false;
+						ent.call_handler = false;
 
                         dc_stats.SockMessages += 1;
 
 						if ( recheck_status &&
-							 ((*sockTable)[i].is_connect_pending == false) )
+							 (ent.is_connect_pending == false) )
 						{
 							// we have already called at least one callback handler.  what
 							// if this handler drained this registed pipe, so that another
 							// read on the pipe could block?  to prevent this, we need
 							// to check one more time to make certain the pipe is ready
 							// for reading.
-							selector.reset();
-							selector.set_timeout( 0 );// set timeout for a poll
-							selector.add_fd( (*sockTable)[i].iosock->get_file_desc(),
+							Selector sselector;
+							sselector.set_timeout( 0 );// set timeout for a poll
+							sselector.add_fd( (*sockTable)[i].iosock->get_file_desc(),
 											 Selector::IO_READ );
 
-							selector.execute();
-							if ( selector.timed_out() ) {
+							sselector.execute();
+							if ( sselector.timed_out() ) {
 								// nothing available, try the next entry...
 								continue;
 							}
@@ -3685,9 +3676,9 @@ void DaemonCore::Driver()
 						// if this sock is a safe_sock, then call the method
 						// to enqueue this packet into the buffers.  if a complete
 						// message is not yet ready, then do not yet call a handler.
-						if ( (*sockTable)[i].iosock->type() == Stream::safe_sock )
+						if ( ent.iosock->type() == Stream::safe_sock )
 						{
-							SafeSock* ss = (SafeSock *)(*sockTable)[i].iosock;
+							SafeSock* ss = static_cast<SafeSock *>(ent.iosock);
 							// call handle_incoming_packet to consume the packet.
 							// it returns true if there is a complete message ready,
 							// otherwise it returns false.
@@ -3700,13 +3691,13 @@ void DaemonCore::Driver()
 						}
 
 						recheck_status = true;
-						CallSocketHandler( i, true );
+						CallSocketHandler( *it, true );
 
 						// update per-handler runtime statistics
-						runtime = dc_stats.AddRuntime((*sockTable)[i].handler_descrip, runtime);
+						runtime = dc_stats.AddRuntime(ent.handler_descrip, runtime);
 
 					}	// if call_handler is True
-				}	// if valid entry in sockTable
+				}	// if valid entry
 			}	// for 0 thru nSock checking if call_handler is true
 
 			runtime = _condor_debug_get_time_double();
@@ -3720,26 +3711,6 @@ void DaemonCore::Driver()
 		pump_cycle_begin_time = runtime;
 
 	}	// end of infinite for loop
-}
-
-bool
-DaemonCore::SocketIsRegistered( Stream *sock )
-{
-	int i = GetRegisteredSocketIndex( sock );
-	return i != -1;
-}
-
-int
-DaemonCore::GetRegisteredSocketIndex( Stream *sock )
-{
-	int i;
-
-	for (i=0;i<nSock;i++) {
-		if ( (*sockTable)[i].iosock == sock ) {
-			return i;
-		}
-	}
-	return -1;
 }
 
 void
@@ -3782,9 +3753,10 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 	    // so that we don't go back to the select loop with the listen
 	    // socket still set.
 	    args->accepted_sock = NULL;
-	    Stream *insock = (*sockTable)[i].iosock;
+		SockEnt &ent = m_sock_manager.getSocket(i);
+	    Stream *insock = ent.io_sock
 	    ASSERT(insock);
-	    if ( (*sockTable)[i].handler==NULL && (*sockTable)[i].handlercpp==NULL &&
+	    if ( ent.handler==NULL && ent.handlercpp==NULL &&
 		    default_to_HandleCommand &&
 		    insock->type() == Stream::reli_sock &&
 		    ((ReliSock *)insock)->_state == Sock::sock_special &&
@@ -3794,7 +3766,7 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
             // b/c we are now in a tight loop accepting, use select to check for more data and bail if none is there.
             Selector selector;
             selector.set_timeout( 0, 0 );
-            selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_READ );
+            selector.add_fd( insock->get_file_desc(), Selector::IO_READ );
             selector.execute();
 
             if ( !selector.has_ready() ) {
@@ -3824,10 +3796,10 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 	    if ( set_service_tid ) {
 		    // setup pointer (pTid) to pass to pool_add - thus servicing_tid will be
 		    // set to the tid value BEFORE pool_add() yields.
-		    pTid = &((*sockTable)[i].servicing_tid);
+		    pTid = &(ent.servicing_tid);
 	    }
 	    CondorThreads::pool_add(DaemonCore::CallSocketHandler_worker_demarshall,args,
-								    pTid,(*sockTable)[i].handler_descrip);
+								    pTid,ent.handler_descrip.c_str());
 
     }
 }
@@ -3847,7 +3819,7 @@ DaemonCore::CallSocketHandler_worker_demarshall(void *arg)
 void
 DaemonCore::CallSocketHandler_worker( int i, bool default_to_HandleCommand, Stream* asock )
 {
-	char *handlerName = NULL;
+	std::string handlerName;
 	double handler_start_time=0;
 	int result=0;
 
@@ -3858,42 +3830,42 @@ DaemonCore::CallSocketHandler_worker( int i, bool default_to_HandleCommand, Stre
 		// handler.
 
 		// Update curr_dataptr for GetDataPtr()
-	curr_dataptr = &( (*sockTable)[i].data_ptr);
+	SockEnt &ent = m_sock_manager.getSocket(i);
+	curr_dataptr = &( ent.data_ptr);
 
 		// log a message
-	if ( (*sockTable)[i].handler || (*sockTable)[i].handlercpp )
+	if ( ent.handler || ent.handlercpp )
 	{
 		if (IsDebugLevel(D_DAEMONCORE)) {
 			dprintf(D_DAEMONCORE,
 					"Calling Handler <%s> for Socket <%s>\n",
-					(*sockTable)[i].handler_descrip,
-					(*sockTable)[i].iosock_descrip);
+					ent.handler_descrip.c_str(),
+					ent.iosock_descrip.c_str());
 		}
 		if (IsDebugLevel(D_COMMAND)) {
-			handlerName = strdup((*sockTable)[i].handler_descrip);
-			dprintf(D_COMMAND, "Calling Handler <%s> (%d)\n", handlerName,i);
+			handlerName =ent.handler_descrip;
+			dprintf(D_COMMAND, "Calling Handler <%s> (%d)\n", handlerName.c_str(), i);
 			handler_start_time = _condor_debug_get_time_double();
 		}
 
-	if ( (*sockTable)[i].handler ) {
+	if ( ent.handler ) {
 			// a C handler
-		result = (*( (*sockTable)[i].handler))( (*sockTable)[i].service, (*sockTable)[i].iosock);
-	} else if ( (*sockTable)[i].handlercpp ) {
+		result = (*( ent.handler))( ent.service, ent.iosock);
+	} else if ( ent.handlercpp ) {
 			// a C++ handler
-		result = ((*sockTable)[i].service->*( (*sockTable)[i].handlercpp))((*sockTable)[i].iosock);
+		result = (ent.service->*( ent.handlercpp))(ent.iosock);
 		}
 
 		if (IsDebugLevel(D_COMMAND)) {
 			double handler_time = _condor_debug_get_time_double() - handler_start_time;
-			dprintf(D_COMMAND, "Return from Handler <%s> %.6fs\n", handlerName, handler_time);
-			free(handlerName);
+			dprintf(D_COMMAND, "Return from Handler <%s> %.6fs\n", handlerName.c_str(), handler_time);
 		}
 	}
 	else if( default_to_HandleCommand ) {
 			// no handler registered, so this is a command
 			// socket.  call the DaemonCore handler which
 			// takes care of command sockets.
-		result = HandleReq(i,asock);
+		result = HandleReq(i, asock);
 	}
 	else {
 			// No registered callback, and we were told not to
@@ -3912,7 +3884,7 @@ DaemonCore::CallSocketHandler_worker( int i, bool default_to_HandleCommand, Stre
 		// not KEEP_STREAM, then
 		// delete the socket and the socket handler.
 	if ( result != KEEP_STREAM ) {
-		Stream *iosock = (*sockTable)[i].iosock;
+		Stream *iosock = ent.iosock;
 			// cancel the socket handler
 		Cancel_Socket( iosock );
 			// delete the cedar socket
@@ -3922,11 +3894,11 @@ DaemonCore::CallSocketHandler_worker( int i, bool default_to_HandleCommand, Stre
 		// so if this tid has it marked as being serviced,
 		// reset the servicing_tid to 0 to signify we done operating
 		// with the socket for the moment.
-		if ( (*sockTable)[i].servicing_tid &&
-			 (*sockTable)[i].servicing_tid == 
+		if ( ent.servicing_tid &&
+			 ent.servicing_tid == 
 				CondorThreads::get_handle()->get_tid() ) 
 		{
-				(*sockTable)[i].servicing_tid = 0;
+				ent.servicing_tid = 0;
 				// need to potentially add this sock to select
 				daemonCore->Wake_up_select();	
 		}
@@ -4190,11 +4162,9 @@ int DaemonCore::ServiceCommandSocket()
 		return 0;
 	}
 
+	Sock * commandSock = m_sock_manager->getInitialCommandSocket();
 	// Just return if there is no command socket
-	if ( initial_command_sock() == -1 )
-		return 0;
-	if ( !( (*sockTable)[initial_command_sock()].iosock) )
-		return 0;
+	if (!commandSock) {return 0;}
 
 		// CallSocketHandler called inside the loop can change nSock 
 		// and nRegisteredSock. We want a variable that won't change during the loop.
@@ -4210,75 +4180,36 @@ int DaemonCore::ServiceCommandSocket()
 	}
 	
 	inServiceCommandSocket_flag = TRUE;
-	for( int i = -1; i < local_nSock; i++) {
-		bool use_loop = true;
-			// We iterate through each socket in sockTable. We do this instead of selecting
-			// over a bunch of different file descriptors because we can have them be removed
-			// while we're still in the process of examining all the sockets.
-			// We could do it the other way using selector.has_ready, selector.fd_ready,
-			// and selector.delete_fd. We also then need to keep track in a separate table
-			// the list of indices we plan on using.
-
-			// We start with i = -1 so that we always start with the initial command socket.
-		if( i == -1 ) {
-			selector.add_fd( (*sockTable)[initial_command_sock()].iosock->get_file_desc(), Selector::IO_READ );
-		}
-			// If (*sockTable)[i].iosock is a valid socket
-			// and that we don't use the initial command socket (could substitute i != initial_command_socket())
-			// and that the handler description is DaemonCommandProtocol::WaitForSocketData
-			// and that the socket is not waiting for an outgoing connection.
-		else if( ((*sockTable)[i].iosock) && 
-				 (i != initial_command_sock()) && 
-				 ((*sockTable)[i].waiting_for_data) &&
-				 ((*sockTable)[i].servicing_tid==0) &&
-				 ((*sockTable)[i].remove_asap == false) &&
-				 ((*sockTable)[i].is_reverse_connect_pending == false) &&
-				 ((*sockTable)[i].is_connect_pending == false)) {
-			selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_READ );
-		}
-		else {
-			use_loop = false;
-		}
-			
-		if(use_loop) {
-				// Setting timeout to 0 means do not block, i.e. just poll the socket
-			selector.set_timeout( 0 );
-			
-			do {
-				
-				errno = 0;
-				selector.execute();
+	const Selector &command_selector = m_sock_manager.getCommandSelector();
+	m_sock_manager.set_command_timeout(0);
+	do
+	{
+		errno = 0;
+		m_sock_manager.executeCommandSelector();
 #ifndef WIN32
-				// Unix
-				if ( selector.failed() ) {
-						// not just interrupted by a signal...
-					EXCEPT("select, error # = %d", errno);
-				}
+			// Unix
+		if ( command_selector.failed() ) {
+			// not just interrupted by a signal...
+			EXCEPT("select, error # = %d", errno);
+		}
 #else
-				// Win32
-				if ( selector.select_retval() == SOCKET_ERROR ) {
-					EXCEPT("select, error # = %d",WSAGetLastError());
-				}
+			// Win32
+		if ( command_selector.select_retval() == SOCKET_ERROR ) {
+			EXCEPT("select, error # = %d",WSAGetLastError());
+		}
 #endif
-				if ( selector.has_ready() ) {
-						// CallSocketHandler_worker called by CallSocketHandler
-						// also calls CheckPrivState in order to
-						// Make sure we didn't leak our priv state.
-					CallSocketHandler(i, true);
-					commands_served++;
-						// If the slot in sockTable just got removed, make sure we exit the loop
-					if ( ((*sockTable)[i].iosock == NULL) ||  // slot is empty
-						 ((*sockTable)[i].remove_asap &&           // slot available
-						  (*sockTable)[i].servicing_tid==0 ) ) {
-						break;
-					}
-				} 
-			} while ( selector.has_ready() ); // loop until no more commands waiting on socket
-			
-			selector.reset();  // Reset selector for next socket
-		} // if(use_loop)
-	} // for( int i = -1; i < local_nSock; i++)
-
+		if ( command_selector.has_ready() ) {
+			int i;
+			while ((i = m_sock_manager.getReadyCommandSocket()) >= 0)
+			{
+				// CallSocketHandler_worker called by CallSocketHandler
+				// also calls CheckPrivState in order to
+				// Make sure we didn't leak our priv state.
+				CallSocketHandler(i, true);
+				commands_served++;
+			}
+		} 
+	} while ( command_selector.has_ready() ); // loop until no more commands waiting on socket
 
 	inServiceCommandSocket_flag = FALSE;
 	return commands_served;
@@ -4309,7 +4240,8 @@ int DaemonCore::HandleReq(Stream *insock, Stream* asock)
 	Stream *accepted_sock = NULL;
 
 	if( asock ) {
-		if( SocketIsRegistered(asock) ) {
+		if (m_sock_manager.isRegistered(asock))
+		{
 			is_command_sock = true;
 		}
 	}
@@ -4329,7 +4261,8 @@ int DaemonCore::HandleReq(Stream *insock, Stream* asock)
 		}
 		else {
 			asock = insock;
-			if( SocketIsRegistered(asock) ) {
+			if (m_sock_manager.isRegistered(asock))
+			{
 				is_command_sock = true;
 			}
 			if( insock->type() == Stream::safe_sock ) {
@@ -4750,15 +4683,6 @@ void DaemonCore::Send_Signal(classy_counted_ptr<DCSignalMsg> msg, bool nonblocki
 	}
 }
 
-int DaemonCore::initial_command_sock() const {
-	for(int j = 0; j < nSock; j++) {
-		if ( (*sockTable)[j].iosock != NULL &&
-			(*sockTable)[j].is_command_sock) {
-			return j;
-		}
-	}
-	return -1;
-}
 
 int DaemonCore::Shutdown_Fast(pid_t pid, bool want_core )
 {
@@ -8844,21 +8768,6 @@ pidWatcherThread( void* arg )
 			// But for now, handle it all here.
 
 			::EnterCriticalSection(&Big_fat_mutex); // enter big fat mutex
-#if 0  // this code replaced by call to Do_Wake_up_select() below
-				// send a NOP command to wake up select()
-			Daemon d( DT_ANY, daemonCore->privateNetworkIpAddr() );
-	        SafeSock ssock;
-			ReliSock rsock;
-			Sock &sock = (d.hasUDPCommandPort() && daemonCore->dc_ssock) ?
-				*(Sock *)&ssock : *(Sock *)&rsock;
-				// Use raw command protocol to avoid blocking on ourself.
-			notify_failed = 
-				!d.connectSock(&sock,1) ||
-				!d.startCommand(DC_NOP, &sock, 1, NULL, "DC_NOP", true) ||
-				!sock.end_of_message();
-#else
-//#pragma REMIND("TJ: remove this dead code.")
-#endif
 				// while we have the Big_fat_mutex, copy any exited pids
 				// out of our thread local MyExitedQueue and into our main
 				// thread's WaitpidQueue (of course, we must have the mutex
