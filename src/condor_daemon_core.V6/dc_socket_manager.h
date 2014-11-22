@@ -102,9 +102,19 @@ public:
 		return m_sel_comm;
 	}
 
+	const Selector &getSelector()
+	{
+		return m_sel_all;
+	}
+
 	void executeCommandSelector()
 	{
 		m_sel_comm.execute();
+	}
+
+	void execute()
+	{
+		m_sel_all.execute();
 	}
 
 	int getReadyCommandSocket() // TODO: Find the next ready socket in the selector, cleaning up as necessary!
@@ -147,10 +157,19 @@ public:
 	void updateSelector();
 
 	void watchFDs(std::vector<std::pair<int, HandlerType> >);
-	void deleteFDs(std::vector<std::pair<int, HandlerType> >);
+	void removeFDs(std::vector<std::pair<int, HandlerType> >);
 
 	void incPending() {m_pending++;}
 	void decPending() {m_pending--;}
+	unsigned registeredSocketCount() {return m_pending + m_registered;}
+
+	void registerCommandSocket(Stream *iosock, const char* iosock_descrip, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
+	void registerSocket(Stream *iosock, const char* iosock_descrip, SocketHandler handler, SocketHandlercpp handlercpp, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
+	int cancelSocket(Stream* insock, void *prev_entry);
+	bool isRegistered(Stream* stream);
+
+	std::vector<int>::iterator begin();
+	std::vector<int>::iterator end();
 
 private:
 	void cleanup(std::vector<SockEnt> &table)

@@ -281,7 +281,7 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 
 	maxCommand = ComSize;
 	maxSig = SigSize;
-	maxSocket = SocSize;
+	int maxSocket = SocSize;
 	maxReap = ReapSize;
 	maxPipe = PipeSize;
 
@@ -308,7 +308,7 @@ DaemonCore::DaemonCore(int PidSize, int ComSize,int SigSize,
 	sec_man = new SecMan();
 	audit_log_callback_fn = 0;
 
-	m_sock_manager.initialize(maxSocket)
+	m_sock_manager.initialize(maxSocket);
 
 #ifdef HAVE_EXT_GSOAP
 	soap_ssl_sock = -1;
@@ -629,10 +629,6 @@ int	DaemonCore::Register_Signal(int sig, const char *sig_descrip,
 							handler_descrip, s, TRUE) );
 }
 
-int DaemonCore::RegisteredSocketCount()
-{
-	return nRegisteredSocks + nPendingSockets;
-}
 
 int DaemonCore::FileDescriptorSafetyLimit()
 {
@@ -1363,8 +1359,7 @@ int DaemonCore::Register_Socket(Stream *iosock, const char* iosock_descrip,
 				HandlerType handler_type,
 				int is_cpp, void **prev_entry)
 {
-    int     i;
-    int     j;
+    int     i = 0;
 
 	if ((handler == NULL) && (handlercpp == NULL))
 	{
@@ -1372,7 +1367,7 @@ int DaemonCore::Register_Socket(Stream *iosock, const char* iosock_descrip,
 	}
 	else
 	{
-		m_sock_manager.registerSocket(handler, handlercpp, iosock, iosock_descrip, handler_descrip, s, perm, handler_type, is_cpp, prev_entry);
+		m_sock_manager.registerSocket(iosock, iosock_descrip, handler, handlercpp, handler_descrip, s, perm, handler_type, is_cpp, prev_entry);
 	}
 /*
     // In sockTable, unlike the others handler tables, we allow for a NULL
@@ -1559,7 +1554,7 @@ int DaemonCore::Register_Socket(Stream *iosock, const char* iosock_descrip,
 
 int DaemonCore::Cancel_Socket( Stream* insock, void *prev_entry)
 {
-	return m_sock_manager.cancelSock(insock, *prev_entry);
+	return m_sock_manager.cancelSocket(insock, prev_entry);
 /*
 	int i,j;
 
@@ -2532,10 +2527,6 @@ void DaemonCore::DumpSigTable(int flag, const char* indent)
 
 void DaemonCore::DumpSocketTable(int flag, const char* indent)
 {
-	int			i;
-	const char *descrip1;
-	const char *descrip2;
-
 	// we want to allow flag to be "D_FULLDEBUG | D_DAEMONCORE",
 	// and only have output if _both_ are specified by the user
 	// in the condor_config.  this is a little different than
@@ -3245,13 +3236,14 @@ void DaemonCore::Driver()
 		for (i = 0; i < nPipe; i++) {
 			if ( (*pipeTable)[i].index != -1 ) {    // if a valid entry....
 				int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
-				watchFDs.push_back(make_pair(pipefd, (*pipeTable)[i].handler_type));
+				watchFDs.push_back(std::make_pair(pipefd, (*pipeTable)[i].handler_type));
+			}
 		}
 /*
-		for (i = 0; i < nPipe; i++) {
-			if ( (*pipeTable)[i].index != -1 ) {	// if a valid entry....
+		for (i = 0; i < nPipe; i++)
+			if ( (*pipeTable)[i].index != -1 )	// if a valid entry....
 				int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
-				switch( (*pipeTable)[i].handler_type ) {
+				switch( (*pipeTable)[i].handler_type ) 
 				case HANDLE_READ:
 					selector.add_fd( pipefd, Selector::IO_READ );
 					break;
@@ -3262,9 +3254,9 @@ void DaemonCore::Driver()
 					selector.add_fd( pipefd, Selector::IO_READ );
 					selector.add_fd( pipefd, Selector::IO_WRITE );
 					break;
-				}
-			}
-        }
+				 
+			 
+         
 */
 #endif
 
@@ -3280,7 +3272,7 @@ void DaemonCore::Driver()
 #else
 		//selector.add_fd( async_pipe[0], Selector::IO_READ );
 #endif
-		watchFDs.push_back(make_pair(async_pipe[0], HANDLE_READ));
+		watchFDs.push_back(std::make_pair(async_pipe[0], HANDLE_READ));
 
 		// Let other threads run while we are waiting on select
 		CondorThreads::enable_parallel(true);
@@ -3435,7 +3427,7 @@ void DaemonCore::Driver()
 				if ( (*sockTable)[i].iosock && 
 					 (*sockTable)[i].servicing_tid==0 &&
 					 (*sockTable)[i].remove_asap == false ) 
-				{	// if a valid entry...
+				 	// if a valid entry...
 					// figure out if we should call a handler.  to do this,
 					// if the socket was doing a connect(), we check the
 					// writefds and excepfds.  otherwise, check readfds.
@@ -3486,8 +3478,7 @@ void DaemonCore::Driver()
 							ent.call_handler = true;
 						}
 					}
-				}	// end of if valid sock entry
-			}	// end of for loop through all sock entries
+			}	// end of if valid sock entry
 
 			runtime = _condor_debug_get_time_double();
 			dc_stats.SocketRuntime += (runtime - group_runtime);
@@ -3642,7 +3633,7 @@ void DaemonCore::Driver()
 			for (std::vector<int>::iterator it = m_sock_manager.begin(); it != m_sock_manager.end(); it++)
 			{
 				SockEnt &ent = m_sock_manager.getSocket(*it);
-			//for(i = 0; i < nSock; i++) {
+			//for(i = 0; i < nSock; i++)
 				if ( ent.iosock ) {	// if a valid entry...
 
 					if ( ent.call_handler ) {
@@ -3661,7 +3652,7 @@ void DaemonCore::Driver()
 							// for reading.
 							Selector sselector;
 							sselector.set_timeout( 0 );// set timeout for a poll
-							sselector.add_fd( (*sockTable)[i].iosock->get_file_desc(),
+							sselector.add_fd( ent.iosock->get_file_desc(),
 											 Selector::IO_READ );
 
 							sselector.execute();
@@ -3694,7 +3685,7 @@ void DaemonCore::Driver()
 						CallSocketHandler( *it, true );
 
 						// update per-handler runtime statistics
-						runtime = dc_stats.AddRuntime(ent.handler_descrip, runtime);
+						runtime = dc_stats.AddRuntime(ent.handler_descrip.c_str(), runtime);
 
 					}	// if call_handler is True
 				}	// if valid entry
@@ -3754,7 +3745,7 @@ DaemonCore::CallSocketHandler( int &i, bool default_to_HandleCommand )
 	    // socket still set.
 	    args->accepted_sock = NULL;
 		SockEnt &ent = m_sock_manager.getSocket(i);
-	    Stream *insock = ent.io_sock
+	    Sock *insock = ent.iosock;
 	    ASSERT(insock);
 	    if ( ent.handler==NULL && ent.handlercpp==NULL &&
 		    default_to_HandleCommand &&
@@ -4141,18 +4132,6 @@ DaemonCore::CheckPrivState( void )
 
 int DaemonCore::ServiceCommandSocket()
 {
-	int ServiceCommandSocketMaxSocketIndex = 
-		param_integer("SERVICE_COMMAND_SOCKET_MAX_SOCKET_INDEX", 0);
-		// A value of <-1 will make ServiceCommandSocket never service
-		// A value of -1 will make ServiceCommandSocket only service
-		// the initial command socket. 
-		// A value of 0 will cause the correct behavior
-		// Any other positive integer will restrict how many sockets get serviced
-		// The larger the number, the more sockets get serviced.
-	if( ServiceCommandSocketMaxSocketIndex < -1 ) {
-		return 0;
-	}
-
 	Selector selector;
 	int commands_served = 0;
 
@@ -4162,23 +4141,10 @@ int DaemonCore::ServiceCommandSocket()
 		return 0;
 	}
 
-	Sock * commandSock = m_sock_manager->getInitialCommandSocket();
+	Sock * commandSock = m_sock_manager.getInitialCommandSocket();
 	// Just return if there is no command socket
 	if (!commandSock) {return 0;}
 
-		// CallSocketHandler called inside the loop can change nSock 
-		// and nRegisteredSock. We want a variable that won't change during the loop.
-	int local_nSock;
-	if ( ServiceCommandSocketMaxSocketIndex == -1) {
-		local_nSock = 0;
-	}
-	else if ( ServiceCommandSocketMaxSocketIndex != 0) {
-		local_nSock = ServiceCommandSocketMaxSocketIndex;
-	}
-	else {
-		local_nSock = nSock;
-	}
-	
 	inServiceCommandSocket_flag = TRUE;
 	const Selector &command_selector = m_sock_manager.getCommandSelector();
 	m_sock_manager.set_command_timeout(0);
@@ -4226,9 +4192,7 @@ DaemonCore::HandleReqAsync(Stream *stream)
 
 int DaemonCore::HandleReq(int socki, Stream* asock)
 {
-	Stream *insock;
-	
-	insock = (*sockTable)[socki].iosock;
+	Stream *insock = m_sock_manager.getSocket(socki).iosock;
 
 	return HandleReq(insock, asock);
 }

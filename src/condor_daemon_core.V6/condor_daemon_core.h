@@ -699,7 +699,7 @@ class DaemonCore : public Service
 	/**
 	   @return Number of currently registered sockets.
 	 */
-	int RegisteredSocketCount();
+	int RegisteredSocketCount() {return m_sock_manager.registeredSocketCount();}
 
 	/** This function is specifically tailored for testing if it is
 		ok to register a new socket (e.g. for non-blocking connect).
