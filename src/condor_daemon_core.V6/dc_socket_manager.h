@@ -73,25 +73,14 @@ public:
 
 	std::vector<SockEnt> &getSockTable();
 
-	void cleanup()
-	{
-		for (std::vector<SockEnt>::iterator it = m_command_socks.begin(); it!= m_command_socks.end(); it++)
-		{
-			if (it->remove_asap && it->servicing_tid==0)
-			{
-				m_command_socks.erase(it);
-			}
-		}
-		cleanup(m_socks);
-	}
-
 	Sock *getInitialCommandSocket()
 	{
-		for(std::vector<SockEnt>::const_iterator it=m_command_socks.begin(); it != m_socks.end(); it++)
+		for (std::vector<int>::const_iterator it=m_command_socks.begin(); it != m_command_socks.end(); it++)
 		{
-			if ( (it->iosock != NULL) && (it->is_command_sock) )
+			SockEnt &ent = m_socks[*it];
+			if (ent.iosock && ent.is_command_sock && !ent.remove_asap)
 			{
-			return it->iosock;
+				return ent.iosock;
 			}
 		}
 		return NULL;
@@ -136,6 +125,16 @@ public:
 		return 0;
 	}
 
+	int getSocketIndex(Stream *sock)
+	{
+		int idx = 0;
+		for (std::vector<SockEnt>::const_iterator it=m_socks.begin(); it!=m_socks.end(); it++, idx++)
+		{
+			if (it->iosock == sock) {return idx;}
+		}
+		return -1;
+	}
+
 	SockEnt &getSocket(int idx)
 	{
 		return m_socks[idx];
@@ -163,8 +162,8 @@ public:
 	void decPending() {m_pending--;}
 	unsigned registeredSocketCount() {return m_pending + m_registered;}
 
-	void registerCommandSocket(Stream *iosock, const char* iosock_descrip, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
-	void registerSocket(Stream *iosock, const char* iosock_descrip, SocketHandler handler, SocketHandlercpp handlercpp, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
+	int registerCommandSocket(Stream *iosock, const char* iosock_descrip, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
+	int registerSocket(Stream *iosock, const char* iosock_descrip, SocketHandler handler, SocketHandlercpp handlercpp, const char *handler_descrip, Service* s, DCpermission perm, HandlerType handler_type, int is_cpp, void **prev_entry);
 	int cancelSocket(Stream* insock, void *prev_entry);
 	bool isRegistered(Stream* stream);
 
@@ -172,19 +171,12 @@ public:
 	std::vector<int>::iterator end();
 
 private:
-	void cleanup(std::vector<SockEnt> &table)
-	{
-		for (std::vector<SockEnt>::iterator it = table.begin(); it != table.end(); it++)
-		{
-			if (it->remove_asap && (0 == it->servicing_tid)) {table.erase(it);}
-		}
-	}
 
 	unsigned m_registered; // number of sockets registered, always < getSockCount()
 	unsigned m_pending; // number of sockets waiting on timers or any other callbacks
 		// Note that command sockets have a concept of the "initial" socket; hence,
 		// this is the only ordered table we keep.
-	std::vector<SockEnt> m_command_socks;
+	std::vector<int> m_command_socks;
 	std::vector<SockEnt> m_socks;
 
 	Selector m_sel_comm;

@@ -678,7 +678,7 @@ class DaemonCore : public Service
     int Cancel_Socket ( Stream * insock, void *prev_entry = NULL );
 
 		// Returns true if the given socket is already registered.
-	bool SocketIsRegistered( Stream *sock );
+	bool SocketIsRegistered( Stream *sock ) {return m_sock_manager.isRegistered(sock);}
 
 		// Call the registered socket handler for this socket
 		// sock - previously registered socket
@@ -2087,6 +2087,7 @@ extern void dc_reconfig();
 */
 
 extern DaemonCore* daemonCore;
+
 #endif
 
 
