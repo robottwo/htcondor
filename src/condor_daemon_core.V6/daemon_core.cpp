@@ -2909,61 +2909,7 @@ void DaemonCore::Driver()
         dc_stats.TimerRuntime += (runtime - group_runtime);
         group_runtime = runtime;
 
-		m_sock_manager.updateSelector();
-		min_deadline = 0;
-/*
-		selector.reset();
-		for (i = 0; i < nSock; i++) {
-
-				// if a valid entry not already being serviced, add to select
-			if ( (*sockTable)[i].iosock && 
-				 (*sockTable)[i].servicing_tid==0 &&
-				 (*sockTable)[i].remove_asap == false ) {	
-					// Setup our fdsets
-				if ( (*sockTable)[i].is_reverse_connect_pending ) {
-					// nothing to do; we are just allowing this socket
-					// to be registered so that it behaves like a socket
-					// that is doing a non-blocking connect
-					// CCBClient will eventually ensure that the
-					// socket's registered callback function is called
-					// We want to ignore the socket's deadline (below)
-					// because that is all taken care of by CCBClient.
-					continue;
-				}
-				else if ( (*sockTable)[i].is_connect_pending ) {
-						// we want to be woken when a non-blocking
-						// connect is ready to write.  when connect
-						// is ready, select will set the writefd set
-						// on success, or the exceptfd set on failure.
-					selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_WRITE );
-					selector.add_fd( (*sockTable)[i].iosock->get_file_desc(), Selector::IO_EXCEPT );
-				} else {
-					int sockfd = (*sockTable)[i].iosock->get_file_desc();
-					switch( (*sockTable)[i].handler_type ) {
-					case HANDLE_READ:
-						selector.add_fd( sockfd, Selector::IO_READ );
-						break;
-					case HANDLE_WRITE:
-						selector.add_fd( sockfd, Selector::IO_WRITE );
-						break;
-					case HANDLE_READ_WRITE:
-						selector.add_fd( sockfd, Selector::IO_READ );
-						selector.add_fd( sockfd, Selector::IO_WRITE );
-						break;
-					}
-				}
-
-					// If this socket times out sooner than
-					// our select timeout, adjust the select timeout.
-				time_t deadline = (*sockTable)[i].iosock->get_deadline();
-				if(deadline) { // If non-zero, there is a timeout.
-					if(min_deadline == 0 || min_deadline > deadline) {
-						min_deadline = deadline;
-					}
-				}
-            }
-		}
-*/
+		min_deadline = m_sock_manager.updateSelector();
 
 		if( min_deadline ) {
 			int deadline_timeout = min_deadline - time(NULL) + 1;
@@ -2983,25 +2929,6 @@ void DaemonCore::Driver()
 				watchFDs.push_back(std::make_pair(pipefd, (*pipeTable)[i].handler_type));
 			}
 		}
-/*
-		for (i = 0; i < nPipe; i++)
-			if ( (*pipeTable)[i].index != -1 )	// if a valid entry....
-				int pipefd = (*pipeHandleTable)[(*pipeTable)[i].index];
-				switch( (*pipeTable)[i].handler_type ) 
-				case HANDLE_READ:
-					selector.add_fd( pipefd, Selector::IO_READ );
-					break;
-				case HANDLE_WRITE:
-					selector.add_fd( pipefd, Selector::IO_WRITE );
-					break;
-				case HANDLE_READ_WRITE:
-					selector.add_fd( pipefd, Selector::IO_READ );
-					selector.add_fd( pipefd, Selector::IO_WRITE );
-					break;
-				 
-			 
-         
-*/
 #endif
 
 
@@ -3012,9 +2939,6 @@ void DaemonCore::Driver()
 		if ( ! async_pipe[0].is_connected()) {
 			EXCEPT("DaemonCore:: async_pipe has been unexpectedly closed!");
 		} 
-		//selector.add_fd( async_pipe[0].get_file_desc() , Selector::IO_READ );
-#else
-		//selector.add_fd( async_pipe[0], Selector::IO_READ );
 #endif
 		watchFDs.push_back(std::make_pair(async_pipe[0], HANDLE_READ));
 
@@ -3037,7 +2961,6 @@ void DaemonCore::Driver()
 #endif
 
 		m_sock_manager.set_timeout(timeout);
-		//selector.set_timeout( timeout );
 
 		errno = 0;
 		time_t time_before = time(NULL);
@@ -3051,7 +2974,6 @@ void DaemonCore::Driver()
 		}
 
 		m_sock_manager.execute();
-		//selector.execute();
 		const Selector &selector = m_sock_manager.getSelector();
 
 		// update statistics on time spent waiting in select.
@@ -3163,67 +3085,6 @@ void DaemonCore::Driver()
 				dprintf(D_ALWAYS,"Received a superuser command\n");
 			}
 
-			// scan through the socket table to find which ones select() set
-			while ((i = m_sock_manager.getReadySocket()) >= 0)
-			{
-/*
-			for(i = 0; i < nSock; i++) 
-				if ( (*sockTable)[i].iosock && 
-					 (*sockTable)[i].servicing_tid==0 &&
-					 (*sockTable)[i].remove_asap == false ) 
-				 	// if a valid entry...
-					// figure out if we should call a handler.  to do this,
-					// if the socket was doing a connect(), we check the
-					// writefds and excepfds.  otherwise, check readfds.
-					(*sockTable)[i].call_handler = false;
-*/
-					SockEnt &ent = m_sock_manager.getSocket(i);
-					time_t deadline = ent.iosock->get_deadline();
-					bool sock_timed_out = ( deadline && deadline < now );
-
-					if ( superuser_command_arrived &&
-						 (ent.iosock != super_dc_rsock &&
-						  ent.iosock != super_dc_ssock) )
-					{
-						// do nothing for now, because we know there is a request pending
-						// on the suerperuser command socket, and this is not the
-						// superuser command socket.
-					}
-					else if ( ent.is_reverse_connect_pending ) {
-						// nothing to do
-					}
-					else if ( ent.is_connect_pending ) {
-
-						if ( selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_WRITE ) ||
-							 selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_EXCEPT ) ||
-							 sock_timed_out )
-						{
-							// A connection pending socket has been
-							// set or the connection attempt has timed out.
-							// Only call handler if CEDAR confirms the
-							// connect algorithm has completed.
-
-							if ( (ent.iosock)->
-							      do_connect_finish() != CEDAR_EWOULDBLOCK)
-							{
-								ent.call_handler = true;
-							}
-						}
-					} else if (ent.handler_type == HANDLE_READ || ent.handler_type == HANDLE_READ_WRITE) {
-						if ( (selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_READ ) ) ||
-							 sock_timed_out )
-						{
-							ent.call_handler = true;
-						}
-					} else if (ent.handler_type == HANDLE_WRITE || ent.handler_type == HANDLE_READ_WRITE) {
-						if ( (selector.fd_ready( ent.iosock->get_file_desc(), Selector::IO_WRITE ) ) ||
-							 sock_timed_out )
-						{
-							ent.call_handler = true;
-						}
-					}
-			}	// end of if valid sock entry
-
 			runtime = _condor_debug_get_time_double();
 			dc_stats.SocketRuntime += (runtime - group_runtime);
 			group_runtime = runtime;
@@ -3267,7 +3128,7 @@ void DaemonCore::Driver()
 
 						(*pipeTable)[i].call_handler = false;
 
-                        dc_stats.PipeMessages += 1;
+						dc_stats.PipeMessages += 1;
 
 						// save the pentry on the stack, since we'd otherwise lose it
 						// if the user's handler call Cancel_Pipe().
@@ -3374,65 +3235,39 @@ void DaemonCore::Driver()
 			group_runtime = runtime;
 
 			// Now loop through all sock entries, calling handlers if required.
-			for (std::vector<int>::iterator it = m_sock_manager.begin(); it != m_sock_manager.end(); it++)
+			int idx;
+			while ((idx = m_sock_manager.getReadySocket(now)) != -1)
 			{
-				SockEnt &ent = m_sock_manager.getSocket(*it);
-			//for(i = 0; i < nSock; i++)
-				if ( ent.iosock ) {	// if a valid entry...
+				SockEnt &ent = m_sock_manager.getSocket(idx);
+				if (!ent.iosock || !ent.call_handler) {continue;}
 
-					if ( ent.call_handler ) {
+				if (superuser_command_arrived && (ent.iosock != super_dc_rsock) && (ent.iosock != super_dc_ssock)) {continue;}
 
-						ent.call_handler = false;
+				ent.call_handler = false;
 
-                        dc_stats.SockMessages += 1;
+				dc_stats.SockMessages += 1;
 
-						if ( recheck_status &&
-							 (ent.is_connect_pending == false) )
-						{
-							// we have already called at least one callback handler.  what
-							// if this handler drained this registed pipe, so that another
-							// read on the pipe could block?  to prevent this, we need
-							// to check one more time to make certain the pipe is ready
-							// for reading.
-							Selector sselector;
-							sselector.set_timeout( 0 );// set timeout for a poll
-							sselector.add_fd( ent.iosock->get_file_desc(),
-											 Selector::IO_READ );
+				// if this sock is a safe_sock, then call the method
+				// to enqueue this packet into the buffers.  if a complete
+				// message is not yet ready, then do not yet call a handler.
+				if ( ent.iosock->type() == Stream::safe_sock )
+				{
+					SafeSock* ss = static_cast<SafeSock *>(ent.iosock);
+					// call handle_incoming_packet to consume the packet.
+					// it returns true if there is a complete message ready,
+					// otherwise it returns false.
+					if ( !(ss->handle_incoming_packet()) ) {
+						// there is not yet a complete message ready.
+						// so go back to the outer for loop - do not
+						// call the user handler yet.
+						continue;
+					}
+				}
 
-							sselector.execute();
-							if ( sselector.timed_out() ) {
-								// nothing available, try the next entry...
-								continue;
-							}
-						}
+				CallSocketHandler(idx, true);
 
-						// ok, select says this socket table entry has new data.
-
-						// if this sock is a safe_sock, then call the method
-						// to enqueue this packet into the buffers.  if a complete
-						// message is not yet ready, then do not yet call a handler.
-						if ( ent.iosock->type() == Stream::safe_sock )
-						{
-							SafeSock* ss = static_cast<SafeSock *>(ent.iosock);
-							// call handle_incoming_packet to consume the packet.
-							// it returns true if there is a complete message ready,
-							// otherwise it returns false.
-							if ( !(ss->handle_incoming_packet()) ) {
-								// there is not yet a complete message ready.
-								// so go back to the outer for loop - do not
-								// call the user handler yet.
-								continue;
-							}
-						}
-
-						recheck_status = true;
-						CallSocketHandler( *it, true );
-
-						// update per-handler runtime statistics
-						runtime = dc_stats.AddRuntime(ent.handler_descrip.c_str(), runtime);
-
-					}	// if call_handler is True
-				}	// if valid entry
+					// update per-handler runtime statistics
+				runtime = dc_stats.AddRuntime(ent.handler_descrip.c_str(), runtime);
 			}	// for 0 thru nSock checking if call_handler is true
 
 			runtime = _condor_debug_get_time_double();

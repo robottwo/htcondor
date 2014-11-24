@@ -23,6 +23,7 @@ struct SockEnt
 	bool                    call_handler;
 	bool                    waiting_for_data;
 	bool                    remove_asap;    // remove when being_serviced==false
+	bool			is_registered;
 	HandlerType             handler_type;
 	int                             servicing_tid;  // tid servicing this socket
 	bool            is_command_sock;
@@ -56,7 +57,9 @@ class SockManager
 public:
 	SockManager() :
 	m_registered(0),
-	m_pending(0)
+	m_pending(0),
+	m_pos_comm(0),
+	m_pos_all(0)
 	{
 	}
 
@@ -99,31 +102,20 @@ public:
 	void executeCommandSelector()
 	{
 		m_sel_comm.execute();
+		m_pos_comm = 0;
 	}
 
 	void execute()
 	{
 		m_sel_all.execute();
+		m_pos_all = 0;
 	}
 
-	int getReadyCommandSocket() // TODO: Find the next ready socket in the selector, cleaning up as necessary!
-	{
-                                        // If the slot in sockTable just got removed, make sure we exit the loop
-/*                                if ( ((*sockTable)[i].iosock == NULL) ||  // slot is empty
-                                         ((*sockTable)[i].remove_asap &&           // slot available
-                                          (*sockTable)[i].servicing_tid==0 ) ) {
-                                        break;
-                                }
-*/	
-		return 0;
-	}
+	int getReadyCommandSocket();
 
 		// Return the socket table entry # of a socket which is either ready or
 		// has a deadline, and that deadline has passed.
-	int getReadySocket()
-	{
-		return 0;
-	}
+	int getReadySocket(time_t now);
 
 	int getSocketIndex(Stream *sock)
 	{
@@ -152,11 +144,14 @@ public:
 
 	void dump(int flag, const char *indent);
 
-	// Iterate through the socket table and remove them from the 
-	void updateSelector();
+	// Iterate through the socket table and make sure all sockets are correctly
+	// registered.
+	//
+	// Return the value of the nearest socket deadline.
+	time_t updateSelector();
 
-	void watchFDs(std::vector<std::pair<int, HandlerType> >);
-	void removeFDs(std::vector<std::pair<int, HandlerType> >);
+	void watchFDs(const std::vector<std::pair<int, HandlerType> > &);
+	void removeFDs(const std::vector<std::pair<int, HandlerType> > &);
 
 	void incPending() {m_pending++;}
 	void decPending() {m_pending--;}
@@ -181,6 +176,8 @@ private:
 
 	Selector m_sel_comm;
 	Selector m_sel_all;
+	unsigned m_pos_comm;
+	unsigned m_pos_all;
 };
 
 #endif
