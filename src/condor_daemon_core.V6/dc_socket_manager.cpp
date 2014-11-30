@@ -84,7 +84,7 @@ SockManager::registerCommandSocket(Stream *iosock, const char* iosock_descrip,
 	if (result < 0) {return result;}
 
 	m_command_socks.push_back(result);
-	registerFD(m_socks[result], m_sel_comm);
+	//registerFD(m_socks[result], m_sel_comm);
 
 	return result;
 }
@@ -141,10 +141,9 @@ SockManager::registerSocket(Stream *iosock, const char* iosock_descrip,
 	int fd_to_register = ((Sock *)iosock)->get_file_desc();
 	unsigned idx2 = 0;
 	bool duplicate_found = false;
-	Stream *stream_to_register = m_socks[idx].iosock;
 	for (std::vector<SockEnt>::iterator it=m_socks.begin(); it!=m_socks.end(); it++, idx2++)
 	{       
-		if ( it->iosock == stream_to_register )
+		if (it->iosock == iosock)
 		{
 			idx = idx2;
 			duplicate_found = true;
@@ -175,7 +174,7 @@ SockManager::registerSocket(Stream *iosock, const char* iosock_descrip,
 		}
 		else
 		{
-			dprintf(D_ALWAYS, "DaemonCore: Attempt to register socket twice\n");
+			dprintf(D_ALWAYS, "DaemonCore: Attempt to register socket %d (ptr=%p) twice (fd=%d)\n", idx, iosock, fd_to_register);
 			return -2;
 		}
 	}
@@ -239,7 +238,7 @@ SockManager::registerSocket(Stream *iosock, const char* iosock_descrip,
 	{
 		ent.waiting_for_data = true;
 	}
-	if (ent.is_connect_pending)
+	if (ent.is_connect_pending && (ent.handler || ent.handlercpp))
 	{	// Note we do not do this for command sockets - we assume these are already connected!
 		m_sel_all.add_fd(fd_to_register, Selector::IO_EXCEPT);
 		m_sel_all.add_fd(fd_to_register, Selector::IO_WRITE);
@@ -465,7 +464,7 @@ SockManager::getReadySocket(time_t now)
 			(it->iosock->do_connect_finish() != CEDAR_EWOULDBLOCK))
 		{
 			it->call_handler = true;
-			return m_pos_all;
+			return m_pos_all++;
 		}
 		else if (m_sel_all.fd_ready(it->iosock->get_file_desc(), Selector::IO_READ) ||
 			m_sel_all.fd_ready(it->iosock->get_file_desc(), Selector::IO_WRITE) ||
@@ -485,7 +484,7 @@ SockManager::getReadySocket(time_t now)
 				if (sel.timed_out()) {continue;}
 			}
 			it->call_handler = true;
-			return m_pos_all;
+			return m_pos_all++;
 		}
 	}
 	return -1;

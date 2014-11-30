@@ -33,8 +33,6 @@ struct SockEnt
 	handler(NULL),
 	handlercpp(NULL),
 	service(NULL),
-	iosock_descrip(NULL),
-	handler_descrip(NULL),
 	data_ptr(NULL),
 	perm(FIRST_PERM),
 	is_cpp(false),
