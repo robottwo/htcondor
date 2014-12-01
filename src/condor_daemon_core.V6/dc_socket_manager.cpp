@@ -84,7 +84,7 @@ SockManager::registerCommandSocket(Stream *iosock, const char* iosock_descrip,
 	if (result < 0) {return result;}
 
 	m_command_socks.push_back(result);
-	//registerFD(m_socks[result], m_sel_comm);
+	m_socks[result].is_command_sock = true;
 
 	return result;
 }
@@ -488,5 +488,20 @@ SockManager::getReadySocket(time_t now)
 		}
 	}
 	return -1;
+}
+
+
+Sock *
+SockManager::getInitialCommandSocket()
+{
+	for (std::vector<int>::const_iterator it=m_command_socks.begin(); it != m_command_socks.end(); it++)
+	{
+		SockEnt &ent = m_socks[*it];
+		if (ent.iosock && ent.is_command_sock && !ent.remove_asap)
+		{
+			return ent.iosock;
+		}
+	}
+	return NULL;
 }
 

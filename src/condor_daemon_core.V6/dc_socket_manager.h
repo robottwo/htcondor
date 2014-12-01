@@ -74,18 +74,7 @@ public:
 
 	std::vector<SockEnt> &getSockTable();
 
-	Sock *getInitialCommandSocket()
-	{
-		for (std::vector<int>::const_iterator it=m_command_socks.begin(); it != m_command_socks.end(); it++)
-		{
-			SockEnt &ent = m_socks[*it];
-			if (ent.iosock && ent.is_command_sock && !ent.remove_asap)
-			{
-				return ent.iosock;
-			}
-		}
-		return NULL;
-	}
+	Sock *getInitialCommandSocket();
 
 	const Selector &getCommandSelector()
 	{
