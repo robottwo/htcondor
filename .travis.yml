@@ -5,3 +5,7 @@ sudo: false
 
 script: ./configure_uw && make
 
+branches:
+  only:
+    - travis_ci_integration
+
