@@ -3,7 +3,10 @@ language: c
 
 sudo: false
 
-script: ./configure_uw -DWITH_LIBCGROUP:BOOL=OFF -DWITH_CREAM:BOOL=OFF && make
+before_install:
+  - curl http://t2.unl.edu/store/sources/condor-prefix.tar.gz | tar zxv
+
+script: CMAKE_LIBRARY_PATH=$PWD/condor-prefix/usr/lib64 ./configure_uw -DWITH_LIBCGROUP:BOOL=OFF -DWITH_CREAM:BOOL=OFF  && make
 
 branches:
   only:
