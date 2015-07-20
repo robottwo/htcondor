@@ -316,6 +316,7 @@ Matchmaker ()
 	NegotiatorTimeout = 30;
  	NegotiatorInterval = 60;
  	MaxTimePerSubmitter = 31536000;
+	MaxTimePerSchedd = 31536000;
  	MaxTimePerSpin = 31536000;
 	MaxTimePerCycle = 31536000;
 
@@ -468,6 +469,9 @@ reinitialize ()
 	// up to 1 year per submitter by default
  	MaxTimePerSubmitter = param_integer("NEGOTIATOR_MAX_TIME_PER_SUBMITTER",31536000);
 
+	// up to 1 year per schedd by default
+	MaxTimePerSchedd = param_integer("NEGOTIATOR_MAX_TIME_PER_SCHEDD",31536000);
+
 	// up to 1 year per spin by default
  	MaxTimePerSpin = param_integer("NEGOTIATOR_MAX_TIME_PER_PIESPIN",31536000);
 
@@ -579,6 +583,7 @@ reinitialize ()
 	dprintf (D_ALWAYS,"NEGOTIATOR_TIMEOUT = %d sec\n",NegotiatorTimeout);
 	dprintf (D_ALWAYS,"MAX_TIME_PER_CYCLE = %d sec\n",MaxTimePerCycle);
 	dprintf (D_ALWAYS,"MAX_TIME_PER_SUBMITTER = %d sec\n",MaxTimePerSubmitter);
+	dprintf (D_ALWAYS,"MAX_TIME_PER_SCHEDD = %d sec\n",MaxTimePerSchedd);
 	dprintf (D_ALWAYS,"MAX_TIME_PER_PIESPIN = %d sec\n",MaxTimePerSpin);
 
 	if( tmp ) free( tmp );
@@ -1237,6 +1242,8 @@ negotiationTime ()
 	// since a different set of machines may now be available.
 	if (MatchList) delete MatchList;
 	MatchList = NULL;
+
+	ScheddsTimeInCycle.clear();
 
 	// ----- Get all required ads from the collector
     time_t start_time_phase1 = time(NULL);
@@ -2501,6 +2508,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
 	double 		pieLeftOrig;
 	int         scheddAdsCountOrig;
 	int			totalTime;
+	int			totalTimeSchedd;
 	int			num_idle_jobs;
 
     int duration_phase3 = 0;
@@ -2632,10 +2640,14 @@ negotiateWithGroup ( int untrimmed_num_startds,
 				totalTime = 0;
 			}
 
-			if (( num_idle_jobs > 0 ) && (totalTime < MaxTimePerSubmitter) ) {
+			totalTimeSchedd = ScheddsTimeInCycle[scheddAddr.Value()];
+
+			if (( num_idle_jobs > 0 ) && (totalTime < MaxTimePerSubmitter) &&
+				(totalTimeSchedd < MaxTimePerSchedd)) {
 				dprintf(D_ALWAYS,"  Negotiating with %s at %s\n",
 					scheddName.Value(), scheddAddr.Value());
-				dprintf(D_ALWAYS, "%d seconds so far\n", totalTime);
+				dprintf(D_ALWAYS, "%d seconds so far for this submitter\n", totalTime);
+				dprintf(D_ALWAYS, "%d seconds so far for this schedd\n", totalTimeSchedd);
 			}
 
 			double submitterLimit = 0.0;
@@ -2717,6 +2729,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
 			int remainingTimeForThisCycle = MaxTimePerCycle - 
 						(startTime - negotiation_cycle_stats[0]->start_time);
 			int remainingTimeForThisSubmitter = MaxTimePerSubmitter - totalTime;
+			int remainingTimeForThisSchedd = MaxTimePerSchedd - totalTimeSchedd;
 			if ( num_idle_jobs == 0 ) {
 				dprintf(D_FULLDEBUG,
 					"  Negotiating with %s skipped because no idle jobs\n",
@@ -2731,6 +2744,14 @@ negotiateWithGroup ( int untrimmed_num_startds,
 					totalTime, MaxTimePerSubmitter);
 				negotiation_cycle_stats[0]->submitters_out_of_time.insert(scheddName.Value());
 				result = MM_DONE;
+			} else if (remainingTimeForThisSchedd <= 0) {
+				dprintf(D_ALWAYS,
+					"  Negotiation with %s skipped because of time limits:\n",
+					scheddName.Value());
+				dprintf(D_ALWAYS,
+					"  %d seconds spent on this schedd, MAX_TIME_PER_SCHEDD is %d secs\n ",
+					totalTimeSchedd, MaxTimePerSchedd);
+				result = MM_DONE;
 			} else if (remainingTimeForThisCycle <= 0) {
 				dprintf(D_ALWAYS,
 					"  Negotiation with %s skipped because MAX_TIME_PER_CYCLE of %d secs exceeded\n",
@@ -2744,7 +2765,7 @@ negotiateWithGroup ( int untrimmed_num_startds,
 			} else {
 				int numMatched = 0;
 				time_t deadline = startTime + 
-					MIN(MaxTimePerSpin, MIN(remainingTimeForThisCycle,remainingTimeForThisSubmitter));
+					MIN(MaxTimePerSpin, MIN(remainingTimeForThisCycle, MIN(remainingTimeForThisSubmitter, remainingTimeForThisSchedd)));
                 if (negotiation_cycle_stats[0]->active_submitters.count(scheddName.Value()) <= 0) {
                     negotiation_cycle_stats[0]->num_idle_jobs += num_idle_jobs;
                 }
@@ -3279,8 +3300,11 @@ obtainAdsFromCollector (
 		} else if( !strcmp(GetMyTypeName(*ad),SUBMITTER_ADTYPE) ) {
 
             MyString subname;
-            if (!ad->LookupString(ATTR_NAME, subname)) {
-                dprintf(D_ALWAYS, "WARNING: ignoring submitter ad with no name\n");
+            string schedd_addr;
+            if (!ad->LookupString(ATTR_NAME, subname) ||
+                !ad->LookupString(ATTR_SCHEDD_IP_ADDR, schedd_addr)) {
+
+                dprintf(D_ALWAYS, "WARNING: ignoring submitter ad with no name and/or address\n");
                 continue;
             }
 
@@ -3297,6 +3321,8 @@ obtainAdsFromCollector (
             }
 
     		ad->Assign(ATTR_TOTAL_TIME_IN_CYCLE, 0);
+
+			ScheddsTimeInCycle[schedd_addr] = 0;
 
 			// Now all that is left is to insert the submitter ad
 			// into our list. However, if want_globaljobprio is true,
@@ -3669,9 +3695,10 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
 		if (currentTime >= deadline) {
 			dprintf (D_ALWAYS, 	
 			"    Reached deadline for %s after %d sec... stopping\n"
-			"       MAX_TIME_PER_SUBMITTER = %d sec, MAX_TIME_PER_CYCLE = %d sec, MAX_TIME_PER_PIESPIN = %d sec\n",
+			"       MAX_TIME_PER_SUBMITTER = %d sec, MAX_TIME_PER_SCHEDD = %d sec, MAX_TIME_PER_CYCLE = %d sec, MAX_TIME_PER_PIESPIN = %d sec\n",
 				schedd_id.Value(), (int)(currentTime - beginTime),
-				MaxTimePerSubmitter, MaxTimePerCycle, MaxTimePerSpin);
+				MaxTimePerSubmitter, MaxTimePerSchedd, MaxTimePerCycle,
+				MaxTimePerSpin);
 			break;	// get out of the infinite for loop & stop negotiating
 		}
 
@@ -3966,6 +3993,7 @@ negotiate(char const* groupName, char const *scheddName, const ClassAd *scheddAd
 void Matchmaker::
 updateNegCycleEndTime(time_t startTime, ClassAd *submitter) {
 	MyString buffer;
+	string schedd_addr;
 	time_t endTime;
 	int oldTotalTime;
 
@@ -3974,6 +4002,10 @@ updateNegCycleEndTime(time_t startTime, ClassAd *submitter) {
 	buffer.formatstr("%s = %ld", ATTR_TOTAL_TIME_IN_CYCLE, (oldTotalTime + 
 					(endTime - startTime)) );
 	submitter->Insert(buffer.Value());
+
+	if ( submitter->LookupString( ATTR_SCHEDD_IP_ADDR, schedd_addr ) ) {
+		ScheddsTimeInCycle[schedd_addr] += endTime - startTime;
+	}
 }
 
 float Matchmaker::
