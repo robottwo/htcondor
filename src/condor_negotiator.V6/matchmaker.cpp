@@ -3682,10 +3682,10 @@ Matchmaker::prefetchResourceRequestLists(ClassAdListDoesNotDeleteAds &submitterA
 				switch (rrl->tryRetrieve(sock))
 				{
 				case ResourceRequestList::RRL_DONE:
-					endNegotiate(scheddAddr);
 				case ResourceRequestList::RRL_NO_MORE_JOBS:
 				{
 					dprintf(D_FULLDEBUG, "Prefetch negotiation immediately finished.\n");
+					if (rrl->needsEndNegotiateNow()) {endNegotiate(scheddAddr);}
 					std::string hash; makeSubmitterScheddHash(**it, hash);
 					m_cachedRRLs[hash] = rrl;
 					CurrentWorkMap::iterator iter = currentWork.find(scheddAddr);
@@ -3763,10 +3763,10 @@ Matchmaker::prefetchResourceRequestLists(ClassAdListDoesNotDeleteAds &submitterA
 			if (!sock) {continue;}
 			switch (rrl.tryRetrieve(sock)) {
 			case ResourceRequestList::RRL_DONE:
-				endNegotiate(scheddAddr);
 			case ResourceRequestList::RRL_NO_MORE_JOBS:
 			{
 					// Successfully prefetched a RRL; cache it in the negotiator.
+				if (rrl.needsEndNegotiateNow()) {endNegotiate(scheddAddr);}
 				std::string hash; makeSubmitterScheddHash(*(it->second.first), hash);
 				m_cachedRRLs[hash] = it->second.second;
 				CurrentWorkMap::iterator iter = currentWork.find(scheddAddr);
