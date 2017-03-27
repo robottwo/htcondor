@@ -48,7 +48,7 @@ if (HAVE_SSH_TO_JOB)
 endif(HAVE_SSH_TO_JOB)
 
 include_directories(${BOOST_INCLUDE})
-condor_exe(condor_tail "peek.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
+condor_exe(condor_tail "peek_main.cpp;peek.cpp" ${C_BIN} "${CONDOR_TOOL_LIBS}" OFF)
 
 
 

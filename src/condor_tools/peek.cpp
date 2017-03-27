@@ -19,6 +19,7 @@
 
 
 #include "condor_common.h"
+#include "peek.h"
 #include "condor_classad.h"
 #include "condor_version.h"
 #include "condor_debug.h"
@@ -34,87 +35,13 @@
 
 #include <iostream>
 
-void
-usage( char *cmd )
-{
-	fprintf(stderr,"Usage: %s [options] <job-id> [filename1[, filename2[, ...]]]\n",cmd);
-	fprintf(stderr,"Tail a file in a running job's sandbox.\n");
-	fprintf(stderr,"The options are:\n");
-	fprintf(stderr,"    -help             Display options\n");
-	fprintf(stderr,"    -version          Display HTCondor version\n");
-	fprintf(stderr,"    -pool <hostname>  Use this central manager\n");
-	fprintf(stderr,"    -name <name>      Query this schedd\n");
-	fprintf(stderr,"    -debug            Show extra debugging info\n");
-	fprintf(stderr,"    -maxbytes         The maximum number of bytes to transfer.  Defaults to 1024\n");
-	fprintf(stderr,"    -auto-retry       Auto retry if job is not running yet.\n");
-	fprintf(stderr,"    -f,-follow        Follow the contents of a file.\n");
-	fprintf(stderr,"By default, only stdout is returned.\n");
-	fprintf(stderr,"The filename may be any file in the job's transfer_output_files.\n");
-	fprintf(stderr,"You may also include the following options.\n");
-	fprintf(stderr,"    -no-stdout        Do not tail the job's stdout\n");
-	fprintf(stderr,"    -stderr           Tail at the job's stderr\n\n");
-}
+using namespace htcondor;
 
-void
+static void
 version()
 {
 	printf( "%s\n%s\n", CondorVersion(), CondorPlatform() );
 }
-
-class HTCondorPeek : public PeekGetFD
-{
-public:
-	HTCondorPeek() :
-		m_transfer_stdout(true),
-		m_transfer_stderr(false),
-		m_auto_retry(false),
-		m_retry_sensible(true),
-		m_follow(false),
-		m_success(false),
-		m_max_bytes(1024),
-		m_stdout_offset(-1),
-		m_stderr_offset(-1),
-		m_xfer_q(0)
-	{
-		m_id.cluster = -1;
-		m_id.proc = -1;
-	}
-
-	virtual ~HTCondorPeek() {
-		delete m_xfer_q;
-	}
-
-	bool parse_args(int argc, char *argv[]);
-	bool execute();
-
-	virtual int getNextFD(const std::string &) {return 1;}
-
-private:
-	bool execute_peek();
-	bool execute_peek_with_session();
-	bool create_session();
-	bool get_transfer_queue_slot();
-	void release_transfer_queue_slot();
-
-	std::string m_pool;
-	std::string m_name;
-	PROC_ID m_id;
-	std::vector<std::string> m_filenames;
-	std::vector<ssize_t> m_offsets;
-	bool m_transfer_stdout;
-	bool m_transfer_stderr;
-	bool m_auto_retry;
-	bool m_retry_sensible;
-	bool m_follow;
-	bool m_success;
-	size_t m_max_bytes;
-	ssize_t m_stdout_offset;
-	ssize_t m_stderr_offset;
-	std::string m_sec_session_id;
-	MyString m_starter_addr;
-	MyString m_starter_version;
-	DCTransferQueue *m_xfer_q;
-};
 
 template <class T>
 static bool parse_integer(const char * str, T& val)
@@ -131,6 +58,12 @@ static bool parse_integer(const char * str, T& val)
 	val = static_cast<T>(ll);
 	return true;
 }
+
+
+HTCondorPeek::~HTCondorPeek() {
+	delete m_xfer_q;
+}       
+
 
 bool
 HTCondorPeek::parse_args(int argc, char *argv[])
@@ -217,6 +150,40 @@ HTCondorPeek::parse_args(int argc, char *argv[])
 }
 
 
+void
+HTCondorPeek::usage(const char *cmd)
+{
+	fprintf(stderr,"Usage: %s [options] <job-id> [filename1[, filename2[, ...]]]\n",cmd);
+	fprintf(stderr,"Tail a file in a running job's sandbox.\n");
+	fprintf(stderr,"The options are:\n");
+	fprintf(stderr,"    -help             Display options\n");
+	fprintf(stderr,"    -version          Display HTCondor version\n");
+	fprintf(stderr,"    -pool <hostname>  Use this central manager\n");
+	fprintf(stderr,"    -name <name>      Query this schedd\n");
+	fprintf(stderr,"    -debug            Show extra debugging info\n");
+	fprintf(stderr,"    -maxbytes         The maximum number of bytes to transfer.  Defaults to 1024\n");
+	fprintf(stderr,"    -auto-retry       Auto retry if job is not running yet.\n");
+	fprintf(stderr,"    -f,-follow        Follow the contents of a file.\n");
+	fprintf(stderr,"By default, only stdout is returned.\n");
+	fprintf(stderr,"The filename may be any file in the job's transfer_output_files.\n");
+	fprintf(stderr,"You may also include the following options.\n");
+	fprintf(stderr,"    -no-stdout        Do not tail the job's stdout\n");
+	fprintf(stderr,"    -stderr           Tail at the job's stderr\n\n");
+}
+
+
+void
+HTCondorPeek::addFiles(const std::vector<std::string> &filenames)
+{
+	for (std::vector<std::string>::const_iterator it = filenames.begin();
+		it != filenames.end();
+		it++)
+	{
+		m_filenames.push_back(*it);
+		m_offsets.push_back(-1);
+	}
+}
+
 
 bool
 HTCondorPeek::execute()
@@ -237,8 +204,14 @@ bool
 HTCondorPeek::create_session()
 {
 	m_retry_sensible = false;
-	DCSchedd schedd(m_name.size() ? m_name.c_str() : NULL,
-			m_pool.size() ? m_pool.c_str() : NULL);
+	std::unique_ptr<DCSchedd> schedd_ptr;
+	if (!m_addr.empty()) {
+		schedd_ptr.reset(new DCSchedd(m_addr.c_str()));
+	} else {
+		schedd_ptr.reset(new DCSchedd(m_name.size() ? m_name.c_str() : NULL,
+					m_pool.size() ? m_pool.c_str() : NULL));
+	}
+	DCSchedd &schedd = *schedd_ptr;
 		
 	dprintf(D_FULLDEBUG,"Locating daemon process\n");
 
@@ -270,7 +243,11 @@ HTCondorPeek::create_session()
 
 	int job_status;
 	MyString hold_reason;
-	bool success = schedd.getJobConnectInfo(m_id,-1,session_info,timeout,&error_stack,m_starter_addr,starter_claim_id,m_starter_version,slot_name,error_msg,m_retry_sensible,job_status,hold_reason);
+	MyString starter_addr;
+	MyString starter_version;
+	bool success = schedd.getJobConnectInfo(m_id,-1,session_info,timeout,&error_stack,starter_addr,starter_claim_id,starter_version,slot_name,error_msg,m_retry_sensible,job_status,hold_reason);
+	m_starter_addr = starter_addr;
+	m_starter_version = starter_version;
 
 		// turn the ssh claim id into a security session so we can use it
 		// to authenticate ourselves to the starter
@@ -283,7 +260,7 @@ HTCondorPeek::create_session()
 					cidp.secSessionKey(),
 					cidp.secSessionInfo(),
 					EXECUTE_SIDE_MATCHSESSION_FQU,
-					m_starter_addr.Value(),
+					m_starter_addr.c_str(),
 					0 );
 		if( !success ) {
 			error_msg = "Failed to create security session to connect to starter.";
@@ -293,10 +270,10 @@ HTCondorPeek::create_session()
 		}
 	}
 
-	CondorVersionInfo vi(m_starter_version.Value());
+	CondorVersionInfo vi(m_starter_version.c_str());
 	if (vi.is_valid() && !vi.built_since_version(7, 9, 5))
 	{
-		std::cerr << "Remote starter (version " << m_starter_version.Value() << ") is too old for condor_peek" << std::endl;
+		std::cerr << "Remote starter (version " << m_starter_version << ") is too old for condor_peek" << std::endl;
 		return false;
 	}
 
@@ -308,7 +285,7 @@ HTCondorPeek::create_session()
 	}
 
 	dprintf(D_FULLDEBUG,"Got connect info for starter %s\n",
-			m_starter_addr.Value());
+			m_starter_addr.c_str());
 	return true;
 }
 
@@ -437,19 +414,4 @@ HTCondorPeek::execute_peek_with_session()
 		return false;
 	}
 	return true;
-}
-
-int
-main(int argc, char *argv[])
-{
-	HTCondorPeek peek;
-	if (!peek.parse_args(argc, argv))
-	{
-		return 1;
-	}
-	if (!peek.execute())
-	{
-		return 1;
-	}
-	return 0;
 }

@@ -24,6 +24,7 @@
 #include "condor_common.h"
 #include "condor_classad.h"
 #include "condor_io.h"
+#include "daemon.h"
 
 class PeekGetFD
 {
