@@ -52,10 +52,10 @@ handle_pyerror()
 class PythonCollectorPlugin : public CollectorPlugin
 {
 public:
-    void initialize();
-    void shutdown();
-    void update(int command, const ClassAd &ad);
-    void invalidate(int command, const ClassAd &ad);
+    virtual void initialize();
+    virtual void shutdown();
+    virtual void update(int command, const ClassAd &ad);
+    virtual void invalidate(int command, const ClassAd &ad);
 
 private:
     std::vector<boost::python::object> m_shutdown_funcs;
@@ -77,8 +77,25 @@ PythonCollectorPlugin::initialize()
     std::string modulesStr;
     if (!param(modulesStr, "COLLECTOR_PLUGIN_PYTHON_MODULES"))
     {
+        dprintf(D_FULLDEBUG, "No python module specified as a collector plugin.\n");
         return;
     }
+    dprintf(D_FULLDEBUG, "Registering python modules %s.\n", modulesStr.c_str());
+
+    try
+    {
+        boost::python::object module = py_import("classad");
+    }
+    catch (boost::python::error_already_set)
+    {
+        if (PyErr_Occurred())
+        {
+            dprintf(D_ALWAYS, "Python exception occurred when loading module classad: %s; will not enable collector plugin.\n", handle_pyerror().c_str());
+            PyErr_Clear();
+        }
+        return;
+    }
+
     StringList modules(modulesStr.c_str());
     m_shutdown_funcs.reserve(modules.number());
     m_update_funcs.reserve(modules.number());
@@ -140,16 +157,31 @@ PythonCollectorPlugin::shutdown()
 void
 PythonCollectorPlugin::update(int command, const ClassAd &ad)
 {
+   if (m_update_funcs.empty()) {return;}
+
     boost::python::list pyArgs;
-
-    boost::shared_ptr<ClassAdWrapper> adWrapper(new ClassAdWrapper());
-    adWrapper->CopyFrom(ad);
-
-    const char *command_str = getCollectorCommandString(command);
-    if (!command_str) {command_str = "UNKNOWN";}
-    pyArgs.append(command_str);
-    pyArgs.append(adWrapper);
     boost::python::dict pyKw;
+
+    try
+    {
+
+        boost::shared_ptr<ClassAdWrapper> adWrapper(new ClassAdWrapper());
+        adWrapper->CopyFrom(ad);
+
+        const char *command_str = getCollectorCommandString(command);
+        if (!command_str) {command_str = "UNKNOWN";}
+        pyArgs.append(command_str);
+        pyArgs.append(adWrapper);
+    }
+    catch (boost::python::error_already_set)
+    {
+        if (PyErr_Occurred())
+        {
+            dprintf(D_ALWAYS, "Python exception occurred when building arguments for update function: %s\n", handle_pyerror().c_str());
+            PyErr_Clear();
+        }
+        return;
+    }
 
     std::vector<boost::python::object>::const_iterator iter = m_update_funcs.begin();
     for (; iter != m_update_funcs.end(); iter++)
@@ -162,26 +194,39 @@ PythonCollectorPlugin::update(int command, const ClassAd &ad)
         {
             if (PyErr_Occurred())
             {
-                dprintf(D_ALWAYS, "Python exception occurred when invoking shutdown function: %s\n", handle_pyerror().c_str());
+                dprintf(D_ALWAYS, "Python exception occurred when invoking update function: %s\n", handle_pyerror().c_str());
                 PyErr_Clear();
             }
         }
     }
 }
 
+
 void
 PythonCollectorPlugin::invalidate(int command, const ClassAd &ad)
 {
     boost::python::list pyArgs;
+    boost::python::dict pyKw;
 
     boost::shared_ptr<ClassAdWrapper> adWrapper(new ClassAdWrapper());
     adWrapper->CopyFrom(ad);
 
-    const char *command_str = getCollectorCommandString(command);
-    if (!command_str) {command_str = "UNKNOWN";}
-    pyArgs.append(command_str);
-    pyArgs.append(adWrapper);
-    boost::python::dict pyKw;
+    try
+    {
+        const char *command_str = getCollectorCommandString(command);
+        if (!command_str) {command_str = "UNKNOWN";}
+        pyArgs.append(command_str);
+        pyArgs.append(adWrapper);
+    }
+    catch (boost::python::error_already_set)
+    {
+        if (PyErr_Occurred())
+        {
+            dprintf(D_ALWAYS, "Python exception occurred when building arguments for update function: %s\n", handle_pyerror().c_str());
+            PyErr_Clear();
+        }
+        return;
+    }
 
     std::vector<boost::python::object>::const_iterator iter = m_invalidate_funcs.begin();
     for (; iter != m_update_funcs.end(); iter++)
